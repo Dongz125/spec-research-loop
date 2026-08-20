@@ -1,159 +1,144 @@
-# Turborepo starter
+# SpecResearch Loop
 
-This Turborepo starter is maintained by the Turborepo core team.
+Hệ thống hoàn thiện ý tưởng nghiên cứu bằng bằng chứng và vòng lặp xác nhận.
+Đồ án được quản lý dưới dạng **Monorepo bằng Turborepo**, gồm 2 ứng dụng chính:
 
-## Using this example
-
-Run the following command:
-
-```sh
-npx create-turbo@latest
+```text
+specresearch-loop/
+├── apps/
+│   ├── backend/   # API (Node.js + TypeScript + Express + Postgres)
+│   └── frontend/  # Giao diện wizard 5 bước (React + TypeScript + Vite)
+├── package.json   # Quản lý dependencies chung của toàn dự án
+└── turbo.json     # Cấu hình Turborepo
 ```
 
-## What's inside?
+Không dùng Docker — database dùng **Neon** (Postgres miễn phí trên cloud),
+AI dùng 1 trong 3 provider tuỳ bạn chọn (xem mục "Chạy miễn phí" bên dưới).
 
-This Turborepo includes the following packages/apps:
+---
 
-### Apps and Packages
+## 1. Yêu cầu trước khi bắt đầu
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+- Node.js **≥ 18** (kiểm tra: `node -v`)
+- Trình quản lý gói: `npm` hoặc `pnpm` (khuyên dùng cho monorepo)
+- Một tài khoản [neon.tech](https://neon.tech) (miễn phí, không cần thẻ)
+- Một trong các API key AI (xem mục 4)
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+---
 
-### Utilities
+## 2. Tạo database trên Neon
 
-This Turborepo has some additional tools already setup for you:
+1. Đăng ký tại [neon.tech](https://neon.tech) → **New Project**
+2. Đặt tên project (vd `specresearch-loop`), chọn region gần bạn
+3. Sau khi tạo xong, vào **Connection Details**, copy chuỗi kết nối dạng:
+    ```
+    postgres://<user>:<password>@<host>/<dbname>?sslmode=require
+    ```
+4. Mở **SQL Editor** trên Neon dashboard, dán toàn bộ nội dung file
+   `apps/backend/db/schema.sql` vào và **Run** — việc này tạo tất cả các bảng.
 
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
+> Nếu bước 4 báo lỗi thiếu extension `vector`, vào Neon dashboard →
+> **Extensions** → bật `pgvector` trước, rồi chạy lại schema.
 
-### Build
+---
 
-To build all apps and packages, run the following command:
+## 3. Cấu hình biến môi trường (.env)
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+Bạn cần cấu hình `.env` cho cả `backend` và `frontend`.
 
-```sh
-cd my-turborepo
-turbo build
+**Cho Backend:**
+
+```bash
+cd apps/backend
+cp .env.example .env
 ```
 
-Without global `turbo`, use your package manager:
+Mở `apps/backend/.env`, điền:
 
-```sh
-cd my-turborepo
-npx turbo build
-pnpm dlx turbo build
-pnpm exec turbo build
+- `DATABASE_URL` — chuỗi kết nối Neon ở bước 2
+- `AI_PROVIDER` — chọn `anthropic` / `gemini` / `ollama` (xem mục 4)
+- API key tương ứng với provider đã chọn
+
+**Cho Frontend:**
+
+```bash
+cd ../frontend
+cp .env.example .env
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+_(Mặc định frontend đã trỏ tới API `http://localhost:4000`, thường không cần sửa gì thêm)_
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+---
 
-```sh
-turbo build --filter=docs
+## 4. Chọn AI provider — cách nào không tốn tiền
+
+Đặt `AI_PROVIDER` trong `apps/backend/.env` theo 1 trong 3 lựa chọn:
+
+### `gemini` — khuyến nghị, miễn phí thật, không cần thẻ
+
+1. Vào [aistudio.google.com/apikey](https://aistudio.google.com/apikey), đăng nhập bằng Google, bấm **Create API key**
+2. Dán vào `GEMINI_API_KEY` trong `.env`
+3. Có giới hạn số request/phút ở tầng free — nếu bước Judge (gọi 5 lần liên tiếp) bị lỗi rate limit, thử lại sau vài giây hoặc giảm số Judge chạy song song trong `judges.ts`.
+
+### `ollama` — 100% miễn phí, chạy trên máy bạn, không giới hạn
+
+1. Cài tại [ollama.com](https://ollama.com)
+2. Chạy `ollama pull llama3.1:8b` (hoặc model nhỏ hơn nếu máy yếu, vd `phi3:mini`)
+3. Để `AI_PROVIDER=ollama`, không cần điền API key nào.
+4. Chất lượng JSON output có thể kém ổn định hơn, nếu lỗi hãy thử model lớn hơn.
+
+### `anthropic` — chất lượng tốt nhất, có $5 dùng thử
+
+1. Tạo tài khoản tại [console.anthropic.com](https://console.anthropic.com)
+2. Dùng model `claude-haiku-4-5-20251001` (rẻ nhất) cho hầu hết các bước để tiết kiệm credit.
+
+---
+
+## 5. Chạy dự án (Turborepo)
+
+Từ **thư mục gốc** của dự án (root), cài đặt toàn bộ dependencies cho cả frontend và backend:
+
+```bash
+pnpm install
 ```
 
-Without global `turbo`:
+Khởi chạy đồng thời cả API và Giao diện chỉ với 1 lệnh duy nhất:
 
-```sh
-npx turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+```bash
+pnpm dev
 ```
 
-### Develop
+- **Backend** tự động chạy tại: `http://localhost:4000`
+- **Frontend** tự động chạy tại: `http://localhost:5173`
 
-To develop all apps and packages, run the following command:
+---
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+## 6. Luồng sử dụng
 
-```sh
-cd my-turborepo
-turbo dev
-```
+1. Ứng dụng tự tạo 1 project demo khi mở lần đầu (lưu `project_id` vào `localStorage` của trình duyệt).
+2. Ở mỗi bước: nhập yêu cầu vào ô prompt → **Tạo gợi ý** → xem/sửa JSON → **Xác nhận** để ghi thành version mới.
+3. **Lịch sử phiên bản** (góc trên) cho phép xem lại và quay về version cũ bất kỳ lúc nào — thao tác này không gọi AI.
+4. Ở bước 4, bấm **Chạy đánh giá** để 5 Judge độc lập chấm bản spec mới nhất.
+5. Bước 5 tổng hợp toàn bộ spec đã xác nhận, xuất ra Markdown hoặc JSON.
 
-Without global `turbo`, use your package manager:
+---
 
-```sh
-cd my-turborepo
-npx turbo dev
-pnpm exec turbo dev
-pnpm exec turbo dev
-```
+## 7. Việc còn thiếu (dành cho bạn tự hoàn thiện)
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+Backend hiện có agent thật cho 3/7 bước (`idea_capture`, `gap`, `judge`).
+Các bước còn lại sẽ báo lỗi "chưa cấu hình agent". Đây là cơ hội để bạn thực hành:
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+1. Copy `apps/backend/src/ai/agents/gapProposer.ts`, đổi system prompt + JSON schema đầu ra cho đúng nhiệm vụ.
+2. Thêm 1 case trong `apps/backend/src/routes/specs.ts` → `switch (step)`.
+3. Frontend không cần sửa gì — `StepField` đã tổng quát cho mọi field.
 
-```sh
-turbo dev --filter=web
-```
+---
 
-Without global `turbo`:
+## 8. Xử lý lỗi thường gặp
 
-```sh
-npx turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-pnpm exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-pnpm exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+| Lỗi                                       | Nguyên nhân thường gặp                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------- |
+| `CORS error` trên frontend                | Backend chưa chạy, hoặc `FRONTEND_URL` trong backend/.env không khớp cổng |
+| `relation "spec_versions" does not exist` | Chưa chạy `db/schema.sql` trên Neon SQL Editor                            |
+| `Agent trả về JSON không hợp lệ`          | Model (đặc biệt Ollama) trả lời kèm text ngoài JSON — siết lại prompt     |
+| `Gemini error: 429`                       | Vượt giới hạn free tier — chờ vài giây rồi thử lại                        |
