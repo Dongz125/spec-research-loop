@@ -1,8 +1,12 @@
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
 
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
+	const userId = localStorage.getItem('specresearch_user_id')
 	const res = await fetch(`${API_URL}${path}`, {
-		headers: { 'Content-Type': 'application/json' },
+		headers: {
+			'Content-Type': 'application/json',
+			...(userId ? { 'x-user-id': userId } : {}), // Gắn header tại đây
+		},
 		...options,
 	})
 	if (!res.ok) {
@@ -13,6 +17,20 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+	login: (email: string) =>
+		req<{ id: string; email: string; name: string }>('/auth/login', {
+			method: 'POST',
+			body: JSON.stringify({ email }),
+		}),
+
+	register: (email: string, name: string) =>
+		req<{ id: string; email: string; name: string }>('/auth/register', {
+			method: 'POST',
+			body: JSON.stringify({ email, name }),
+		}),
+
+	getProjects: () => req<any[]>('/projects'),
+
 	createProject: (title: string) =>
 		req<{ id: string; title: string }>('/projects', {
 			method: 'POST',

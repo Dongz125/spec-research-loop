@@ -1,56 +1,52 @@
 import { Router } from 'express'
-import { query } from '../db'
+import { db } from '../db/db'
+import { projects, specVersions } from '../db/schema'
+import { eq, desc } from 'drizzle-orm'
 
 export const router = Router()
 
-// Demo: dùng 1 user cố định, chưa làm auth thật.
-// Khi cần auth, thêm middleware xác thực và lấy userId từ đó.
-const DEMO_USER_EMAIL = 'student@example.com'
-
-async function getOrCreateDemoUser() {
-	const [existing] = await query<{ id: string }>(
-		`SELECT id FROM users WHERE email = $1`,
-		[DEMO_USER_EMAIL],
-	)
-	if (existing) return existing.id
-	const [created] = await query<{ id: string }>(
-		`INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id`,
-		[DEMO_USER_EMAIL, 'Demo Student'],
-	)
-	return created.id
+// Middleware lấy userId từ header (frontend sẽ gửi lên)
+function getUserId(req: any, res: any, next: any) {
+	const userId = req.headers['x-user-id']
+	if (!userId) return res.status(401).json({ error: 'Chưa đăng nhập' })
+	req.userId = userId
+	next()
 }
 
-router.post('/projects', async (req, res) => {
-	const { title } = req.body as { title: string }
-	const userId = await getOrCreateDemoUser()
-	const [project] = await query(
-		`INSERT INTO projects (user_id, title) VALUES ($1, $2) RETURNING *`,
-		[userId, title || 'Ý tưởng nghiên cứu chưa đặt tên'],
-	)
+router.post('/', getUserId, async (req: any, res) => {
+	const { title } = req.body
+	const [project] = await db
+		.insert(projects)
+		.values({
+			userId: req.userId,
+			title: title || 'Ý tưởng nghiên cứu chưa đặt tên',
+		})
+		.returning()
 	res.json(project)
 })
 
-router.get('/projects', async (_req, res) => {
-	const userId = await getOrCreateDemoUser()
-	const rows = await query(
-		`SELECT * FROM projects WHERE user_id = $1 ORDER BY updated_at DESC`,
-		[userId],
-	)
+router.get('/', getUserId, async (req: any, res) => {
+	const rows = await db.query.projects.findMany({
+		where: eq(projects.userId, req.userId),
+		orderBy: [desc(projects.updatedAt)],
+	})
 	res.json(rows)
 })
 
-router.get('/projects/:id', async (req, res) => {
-	const [project] = await query(`SELECT * FROM projects WHERE id = $1`, [
-		req.params.id,
-	])
+router.get('/:id', async (req, res) => {
+	const [project] = await db
+		.select()
+		.from(projects)
+		.where(eq(projects.id, req.params.id))
 	if (!project)
 		return res.status(404).json({ error: 'Không tìm thấy project' })
 
-	const [latestSpec] = await query(
-		`SELECT * FROM spec_versions WHERE project_id = $1
-     ORDER BY version_number DESC LIMIT 1`,
-		[req.params.id],
-	)
+	const [latestSpec] = await db
+		.select()
+		.from(specVersions)
+		.where(eq(specVersions.projectId, req.params.id))
+		.orderBy(desc(specVersions.versionNumber))
+		.limit(1)
 
 	res.json({ project, latest_spec: latestSpec ?? null })
 })
