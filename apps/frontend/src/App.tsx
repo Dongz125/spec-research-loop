@@ -3,7 +3,7 @@ import { api } from './lib/api'
 import type { ResearchSpec } from './lib/types'
 import { WizardLayout, WizardStep } from './components/WizardLayout'
 
-// Import các trang mới được refactor
+import { Dashboard } from './pages/Dashboard'
 import { Step1_Idea } from './pages/Step1_Idea'
 import { Step2_RelatedWorkGap } from './pages/Step2_RelatedWorkGap'
 import { Step3_ContributionExperiment } from './pages/Step3_ContributionExperiment'
@@ -18,9 +18,10 @@ const SCREENS: WizardStep[] = [
 	{ id: 'final', label: 'Spec cuối' },
 ]
 
-const PROJECT_ID_KEY = 'specresearch_project_id'
-
 export default function App() {
+	const [userId, setUserId] = useState<string | null>(
+		localStorage.getItem('specresearch_user_id'),
+	)
 	const [projectId, setProjectId] = useState<string | null>(null)
 	const [projectTitle, setProjectTitle] = useState(
 		'Ý tưởng nghiên cứu chưa đặt tên',
@@ -28,105 +29,114 @@ export default function App() {
 	const [spec, setSpec] = useState<ResearchSpec>({})
 	const [screen, setScreen] = useState('idea')
 	const [furthest, setFurthest] = useState(1)
-	const [ready, setReady] = useState(false)
-	const [initError, setInitError] = useState<string | null>(null)
 
-	useEffect(() => {
-		;(async () => {
-			try {
-				let id = localStorage.getItem(PROJECT_ID_KEY)
-				if (!id) {
-					const created = await api.createProject(
-						'Ý tưởng nghiên cứu mới',
-					)
-					id = created.id
-					localStorage.setItem(PROJECT_ID_KEY, id)
-				}
-				setProjectId(id)
-				await refreshProject(id)
-				setReady(true)
-			} catch (e: any) {
-				setInitError(
-					e.message ??
-						'Không kết nối được backend. Kiểm tra: backend đã chạy (npm run dev trong /backend) chưa, DATABASE_URL đúng chưa, và VITE_API_URL trong frontend/.env có trỏ đúng cổng backend không.',
-				)
-			}
-		})()
-	}, [])
+	function isStepCompleted(stepId: string) {
+		if (stepId === 'idea') return !!spec.problem_statement?.value
+		if (stepId === 'related_gap') return !!spec.gap_candidates?.value
+		if (stepId === 'contribution') return !!spec.compute_budget?.value
+		return true
+	}
 
-	async function refreshProject(id: string) {
+	async function loadProject(id: string) {
 		const { project, latest_spec } = await api.getProject(id)
 		setProjectTitle(project.title)
 		setSpec(latest_spec?.data ?? {})
+		setProjectId(id)
+
+		const stepMap: Record<string, string> = {
+			idea_capture: 'idea',
+			gap: 'related_gap',
+			feasibility: 'contribution',
+			judge: 'judge',
+			final: 'final',
+		}
+
+		const targetScreen = stepMap[project.currentStep] || 'idea'
+		setScreen(targetScreen)
+
+		const targetIdx = SCREENS.findIndex((s) => s.id === targetScreen)
+		setFurthest(Math.max(1, targetIdx + 1))
 	}
 
-	function goTo(id: string) {
-		setScreen(id)
-		const idx = SCREENS.findIndex((s) => s.id === id)
-		setFurthest((f) => Math.max(f, idx + 1))
-	}
-
-	if (initError) {
+	// NẾU CHƯA CÓ PROJECT NÀO ĐƯỢC CHỌN (Bao gồm cả trạng thái chưa đăng nhập)
+	if (!projectId) {
 		return (
-			<div className="mx-auto max-w-xl px-6 py-16">
-				<div className="rounded-xl border border-red-200 bg-red-50 p-5 shadow-sm">
-					<h2 className="text-base font-semibold text-red-800">
-						Không khởi tạo được project
-					</h2>
-					<p className="mt-2 text-sm text-red-700">{initError}</p>
-				</div>
-			</div>
+			<Dashboard
+				userId={userId}
+				onLoginSuccess={(id) => {
+					localStorage.setItem('specresearch_user_id', id)
+					setUserId(id)
+				}}
+				onLogout={() => {
+					localStorage.removeItem('specresearch_user_id')
+					setUserId(null)
+					setProjectId(null)
+				}}
+				onSelectProject={loadProject}
+			/>
 		)
 	}
 
-	if (!ready || !projectId) {
-		return (
-			<div className="flex min-h-screen items-center justify-center text-sm text-slate-500">
-				Đang khởi tạo project…
-			</div>
-		)
-	}
-
+	// ĐÃ CHỌN PROJECT -> VÀO LUỒNG WIZARD
 	const currentIndex = SCREENS.findIndex((s) => s.id === screen)
+	const canGoNext = isStepCompleted(screen)
 
 	return (
 		<WizardLayout
 			steps={SCREENS}
 			currentStepId={screen}
 			furthestReached={furthest}
-			onNavigate={goTo}
+			onNavigate={(id) => {
+				const targetIdx = SCREENS.findIndex((s) => s.id === id)
+				if (targetIdx < furthest) {
+					setScreen(id)
+				}
+			}}
 			projectTitle={projectTitle}
 			onTitleChange={setProjectTitle}
 			onBack={
 				currentIndex > 0
-					? () => goTo(SCREENS[currentIndex - 1].id)
+					? () => setScreen(SCREENS[currentIndex - 1].id)
 					: undefined
 			}
 			onNext={
-				currentIndex < SCREENS.length - 1
-					? () => goTo(SCREENS[currentIndex + 1].id)
+				canGoNext && currentIndex < SCREENS.length - 1
+					? () => {
+							const nextIdx = currentIndex + 1
+							setScreen(SCREENS[nextIdx].id)
+							setFurthest((prev) => Math.max(prev, nextIdx + 1))
+						}
 					: undefined
 			}
 		>
+			<div className="mb-4">
+				<button
+					onClick={() => setProjectId(null)}
+					className="text-xs font-medium text-slate-500 hover:text-indigo-600 transition-colors"
+				>
+					← Quay lại danh sách dự án
+				</button>
+			</div>
+
 			{screen === 'idea' && (
 				<Step1_Idea
 					projectId={projectId}
 					spec={spec}
-					onConfirmed={() => refreshProject(projectId)}
+					onConfirmed={() => loadProject(projectId)}
 				/>
 			)}
 			{screen === 'related_gap' && (
 				<Step2_RelatedWorkGap
 					projectId={projectId}
 					spec={spec}
-					onFieldConfirmed={() => refreshProject(projectId)}
+					onFieldConfirmed={() => loadProject(projectId)}
 				/>
 			)}
 			{screen === 'contribution' && (
 				<Step3_ContributionExperiment
 					projectId={projectId}
 					spec={spec}
-					onFieldConfirmed={() => refreshProject(projectId)}
+					onFieldConfirmed={() => loadProject(projectId)}
 				/>
 			)}
 			{screen === 'judge' && (
@@ -134,8 +144,8 @@ export default function App() {
 					projectId={projectId}
 					spec={spec}
 					onConfirmed={() => {
-						refreshProject(projectId)
-						goTo('final')
+						loadProject(projectId)
+						setScreen('final')
 					}}
 				/>
 			)}

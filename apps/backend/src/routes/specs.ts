@@ -11,14 +11,14 @@ import { runFeasibilityEstimator } from '../ai/agents/feasibilityEstimator'
 import { runJudgeResolutionProposer } from '../ai/agents/judgeResolutionProposer'
 import { StepId } from '../types'
 
-export const router = Router()
+export const router = Router({mergeParams: true})
 
 // ---------------------------------------------------------------------
-// POST /projects/:id/steps/:step/generate
+// POST /steps/:step/generate
 // Gọi AI để (re)generate gợi ý cho 1 bước, dựa trên prompt tự do của user.
 // Đây KHÔNG ghi version mới ngay — chỉ trả preview để user xác nhận.
 // ---------------------------------------------------------------------
-router.post('/projects/:id/steps/:step/generate', async (req, res) => {
+router.post('/steps/:step/generate', async (req: any, res) => {
 	const { id: projectId } = req.params
 	const step = req.params.step as StepId
 	const { instruction } = req.body as { instruction: string }
@@ -79,12 +79,12 @@ router.post('/projects/:id/steps/:step/generate', async (req, res) => {
 })
 
 // ---------------------------------------------------------------------
-// POST /projects/:id/steps/:step/confirm
+// POST /steps/:step/confirm
 // User xác nhận (hoặc chỉnh sửa tay) preview -> ghi thành spec_version MỚI.
 // Đây là điểm mấu chốt: mỗi lần confirm tạo 1 dòng mới trong spec_versions,
 // không ghi đè — cho phép "Lịch sử phiên bản" và quay lại bất kỳ lúc nào.
 // ---------------------------------------------------------------------
-router.post('/projects/:id/steps/:step/confirm', async (req, res) => {
+router.post('/steps/:step/confirm', async (req: any, res) => {
 	const { id: projectId } = req.params
 	const step = req.params.step as StepId
 	const { updatedFields, changeSummary } = req.body as {
@@ -142,9 +142,9 @@ router.post('/projects/:id/steps/:step/confirm', async (req, res) => {
 })
 
 // ---------------------------------------------------------------------
-// GET /projects/:id/versions  — lịch sử phiên bản, cho UI "Lịch sử phiên bản"
+// GET /versions  — lịch sử phiên bản, cho UI "Lịch sử phiên bản"
 // ---------------------------------------------------------------------
-router.get('/projects/:id/versions', async (req, res) => {
+router.get('/versions', async (req: any, res) => {
 	const rows = await query(
 		`SELECT id, version_number, step, changed_fields, change_summary,
             created_by, created_at
@@ -156,12 +156,12 @@ router.get('/projects/:id/versions', async (req, res) => {
 })
 
 // ---------------------------------------------------------------------
-// POST /projects/:id/versions/:versionNumber/rollback
+// POST /versions/:versionNumber/rollback
 // "Quay lại bước trước" — chỉ đơn giản đọc lại version cũ, KHÔNG gọi AI.
 // ---------------------------------------------------------------------
 router.post(
-	'/projects/:id/versions/:versionNumber/rollback',
-	async (req, res) => {
+	'/versions/:versionNumber/rollback',
+	async (req: any, res) => {
 		const { id: projectId, versionNumber } = req.params
 		const [old] = await query<{ data: unknown; step: string }>(
 			`SELECT data, step FROM spec_versions WHERE project_id=$1 AND version_number=$2`,
@@ -180,9 +180,9 @@ router.post(
 )
 
 // ---------------------------------------------------------------------
-// POST /projects/:id/judge  — chạy 5 Judge độc lập trên version mới nhất
+// POST /judge  — chạy 5 Judge độc lập trên version mới nhất
 // ---------------------------------------------------------------------
-router.post('/projects/:id/judge', async (req, res) => {
+router.post('/judge', async (req: any, res) => {
 	const { id: projectId } = req.params
 	const [latest] = await query<{ id: string; data: unknown }>(
 		`SELECT id, data FROM spec_versions WHERE project_id=$1
