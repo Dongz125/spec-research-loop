@@ -20,10 +20,16 @@ export interface SpecField<T> {
 
 export interface ResearchSpec {
 	problem_statement: SpecField<string>
+	search_keywords: SpecField<string[]>
+	idea_interpretation: SpecField<{
+		result: unknown
+		answers: Record<string, string>
+	}>
 	research_questions: SpecField<string[]>
 	gap_candidates: SpecField<
 		{ id: string; text: string; evidence_source_ids: string[] }[]
 	>
+	selected_gap_direction: SpecField<{ id: string; label: string }>
 	contributions: SpecField<string[]>
 	claim_evidence_matrix: SpecField<
 		{
@@ -73,10 +79,15 @@ export type StepId =
 // cơ chế chống tràn: Context Builder tra bảng này để biết lấy field nào,
 // không bao giờ gửi toàn bộ spec nếu không cần.
 export const STEP_FIELD_MAP: Record<StepId, (keyof ResearchSpec)[]> = {
-	idea_capture: ['problem_statement'],
+	idea_capture: ['problem_statement', 'search_keywords', 'idea_interpretation'],
 	decomposition: ['problem_statement', 'research_questions'],
-	related_work: ['problem_statement', 'related_work_matrix'],
-	gap: ['problem_statement', 'related_work_matrix', 'gap_candidates'],
+	related_work: ['problem_statement', 'search_keywords', 'related_work_matrix'],
+	gap: [
+		'problem_statement',
+		'related_work_matrix',
+		'gap_candidates',
+		'selected_gap_direction',
+	],
 	contribution: ['gap_candidates', 'contributions', 'claim_evidence_matrix'],
 	experiment_design: ['claim_evidence_matrix', 'experimental_protocol'],
 	feasibility: ['experimental_protocol', 'compute_budget'],

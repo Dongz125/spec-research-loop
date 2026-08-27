@@ -1,5 +1,13 @@
 import { useState } from 'react'
-import { Search, Loader2, Lightbulb, X, ShieldAlert } from 'lucide-react'
+import {
+	Search,
+	Loader2,
+	Lightbulb,
+	X,
+	ShieldAlert,
+	Sparkles,
+	Check,
+} from 'lucide-react'
 import { api } from '@/lib/api'
 import type { ResearchSpec } from '@/lib/types'
 import {
@@ -75,10 +83,10 @@ export function Step2_RelatedWorkGap({
 }: Props) {
 	// ---------- Cột trái: tìm kiếm ----------
 	const [keyword, setKeyword] = useState('')
-	const [keywords, setKeywords] = useState<string[]>([
-		'prompt optimization',
-		'hallucination',
-	])
+	const [keywords, setKeywords] = useState<string[]>(
+		(spec.search_keywords?.value as string[] | undefined) ?? [],
+	)
+	const [keywordSuggesting, setKeywordSuggesting] = useState(false)
 	const [activeFilters, setActiveFilters] = useState<string[]>(
 		SOURCE_FILTERS.map((f) => f.id),
 	)
@@ -88,6 +96,38 @@ export function Step2_RelatedWorkGap({
 			setKeywords((prev) => [...prev, keyword.trim()])
 		}
 		setKeyword('')
+	}
+
+	async function suggestKeywords() {
+		const idea = spec.problem_statement?.value as string | undefined
+		if (!idea?.trim()) {
+			setRwError('Chưa có ý tưởng đã xác nhận để AI đề xuất từ khóa.')
+			return
+		}
+
+		setKeywordSuggesting(true)
+		setRwError(null)
+		try {
+			const res = await api.generate(projectId, 'idea_capture', idea)
+			const detected = (res.preview as { detected_keywords?: string[] })
+				.detected_keywords
+			const normalized = Array.from(
+				new Set(
+					(detected ?? [])
+						.map((item) => item.trim())
+						.filter(Boolean),
+				),
+			)
+			if (normalized.length === 0) {
+				setRwError('AI chưa đề xuất được từ khóa. Vui lòng thử lại.')
+				return
+			}
+			setKeywords(normalized)
+		} catch (e: any) {
+			setRwError(e.message ?? 'Không đề xuất được từ khóa')
+		} finally {
+			setKeywordSuggesting(false)
+		}
 	}
 
 	function toggleFilter(id: string) {
@@ -109,8 +149,15 @@ export function Step2_RelatedWorkGap({
 			: null,
 	)
 	const [rwSaving, setRwSaving] = useState(false)
+	const [rwConfirmed, setRwConfirmed] = useState(
+		spec.related_work_matrix?.status === 'CONFIRMED',
+	)
 
 	async function handleSearchRelatedWork() {
+		if (keywords.length === 0) {
+			setRwError('Cần ít nhất một từ khóa trước khi tìm related-work.')
+			return
+		}
 		setRwLoading(true)
 		setRwError(null)
 		try {
@@ -126,6 +173,8 @@ export function Step2_RelatedWorkGap({
 				instruction,
 			)
 			setRwResult(res.preview as RelatedWorkResult)
+			setRwConfirmed(false)
+			setGapResult(null)
 		} catch (e: any) {
 			setRwError(e.message ?? 'Không tìm được công trình liên quan')
 		} finally {
@@ -134,6 +183,8 @@ export function Step2_RelatedWorkGap({
 	}
 
 	function removeRow(id: string) {
+		setRwConfirmed(false)
+		setGapResult(null)
 		setRwResult((prev) =>
 			prev
 				? {
@@ -155,6 +206,11 @@ export function Step2_RelatedWorkGap({
 				projectId,
 				'related_work',
 				{
+					search_keywords: {
+						value: keywords,
+						status: 'CONFIRMED',
+						source: 'user',
+					},
 					related_work_matrix: {
 						value: rwResult.related_work_matrix,
 						status: 'CONFIRMED',
@@ -162,6 +218,11 @@ export function Step2_RelatedWorkGap({
 					},
 				},
 				`Xác nhận bảng related-work (${rwResult.related_work_matrix.length} nguồn)`,
+			)
+			setRwConfirmed(true)
+			await proposeGap(
+				'Dựa trên bảng related-work vừa xác nhận, hãy đề xuất các research gap phù hợp và các hướng để người dùng lựa chọn.',
+				true,
 			)
 			onFieldConfirmed()
 		} catch (e: any) {
@@ -185,26 +246,42 @@ export function Step2_RelatedWorkGap({
 	)
 	const [gapSaving, setGapSaving] = useState(false)
 	const [customDirection, setCustomDirection] = useState('')
+	const [selectedGapOption, setSelectedGapOption] = useState<GapOption | null>(
+		(spec.selected_gap_direction?.value as GapOption | undefined) ?? null,
+	)
 
-	async function proposeGap(instruction: string) {
+	async function proposeGap(
+		instruction: string,
+		confirmedNow = false,
+	): Promise<GapResult | null> {
+		if (!rwConfirmed && !confirmedNow) {
+			setGapError('Hãy xác nhận bảng related-work trước khi đề xuất gap.')
+			return null
+		}
 		if (!rwResult || rwResult.related_work_matrix.length === 0) {
 			setGapError('Cần có bảng related-work trước khi đề xuất gap.')
-			return
+			return null
 		}
 		setGapLoading(true)
 		setGapError(null)
 		try {
 			const res = await api.generate(projectId, 'gap', instruction)
-			setGapResult(res.preview as GapResult)
+			const generated = res.preview as GapResult
+			setGapResult(generated)
+			return generated
 		} catch (e: any) {
 			setGapError(e.message ?? 'Không đề xuất được research gap')
+			return null
 		} finally {
 			setGapLoading(false)
 		}
 	}
 
-	async function confirmGap() {
-		if (!gapResult) return
+	async function saveGapSelection(
+		option: GapOption,
+		result: GapResult | null = gapResult,
+	) {
+		if (!result || gapSaving) return
 		setGapSaving(true)
 		setGapError(null)
 		try {
@@ -213,18 +290,35 @@ export function Step2_RelatedWorkGap({
 				'gap',
 				{
 					gap_candidates: {
-						value: gapResult.gap_candidates,
+						value: result.gap_candidates,
+						status: 'CONFIRMED',
+						source: 'user',
+					},
+					selected_gap_direction: {
+						value: { id: option.id, label: option.label },
 						status: 'CONFIRMED',
 						source: 'user',
 					},
 				},
-				'Xác nhận research gap',
+				`Chọn hướng research gap: ${option.label}`,
 			)
+			setSelectedGapOption(option)
 			onFieldConfirmed()
 		} catch (e: any) {
 			setGapError(e.message ?? 'Không lưu được research gap')
 		} finally {
 			setGapSaving(false)
+		}
+	}
+
+	async function submitCustomDirection() {
+		const direction = customDirection.trim()
+		if (!direction) return
+		const generated = await proposeGap(
+			`Bỏ qua các lựa chọn trên, tạo gap theo hướng sau: ${direction}`,
+		)
+		if (generated) {
+			await saveGapSelection({ id: 'custom', label: direction }, generated)
 		}
 	}
 
@@ -246,6 +340,9 @@ export function Step2_RelatedWorkGap({
 						<CardTitle className="text-sm">
 							Từ khoá &amp; kế hoạch tìm kiếm
 						</CardTitle>
+						<CardDescription>
+							AI đề xuất từ ý tưởng đã xác nhận ở bước 1. Bạn có thể chỉnh sửa.
+						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
 						<div className="flex gap-1.5">
@@ -271,20 +368,42 @@ export function Step2_RelatedWorkGap({
 								<Badge
 									key={k}
 									variant="secondary"
-									className="gap-1"
+									className="gap-1 cursor-pointer hover:bg-indigo-100"
+									onClick={() => setKeyword(k)}
+									title="Bấm để đưa từ khóa vào ô nhập"
 								>
 									{k}
 									<X
 										className="h-3 w-3 cursor-pointer"
-										onClick={() =>
+										onClick={(event) => {
+											event.stopPropagation()
 											setKeywords((prev) =>
 												prev.filter((x) => x !== k),
 											)
-										}
+										}}
 									/>
 								</Badge>
 							))}
 						</div>
+						{keywords.length === 0 && (
+							<p className="text-xs font-medium text-amber-600">
+								Chưa có từ khóa. Hãy thêm ít nhất một từ khóa để tìm kiếm.
+							</p>
+						)}
+						<Button
+							variant="outline"
+							size="sm"
+							className="w-full"
+							onClick={suggestKeywords}
+							disabled={keywordSuggesting || !spec.problem_statement?.value}
+						>
+							{keywordSuggesting ? (
+								<Loader2 className="h-4 w-4 animate-spin" />
+							) : (
+								<Sparkles className="h-4 w-4" />
+							)}
+							{keywordSuggesting ? 'Đang gợi ý...' : 'AI gợi ý từ ý tưởng'}
+						</Button>
 
 						<div>
 							<p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -330,25 +449,30 @@ export function Step2_RelatedWorkGap({
 						<Button
 							size="sm"
 							onClick={handleSearchRelatedWork}
-							disabled={rwLoading}
+							disabled={rwLoading || keywords.length === 0}
 						>
 							{rwLoading ? (
 								<>
 									<Loader2 className="h-4 w-4 animate-spin" />{' '}
-									Đang tìm...
+									Đang đề xuất...
 								</>
 							) : (
 								<>
-									<Search className="h-4 w-4" /> Tìm kiếm
+									<Search className="h-4 w-4" /> AI đề xuất
 								</>
 							)}
 						</Button>
 					</CardHeader>
 					<CardContent>
-						{!rwResult?.related_work_matrix.length && (
+						{!rwResult?.related_work_matrix.length && keywords.length > 0 && (
 							<p className="py-6 text-center text-sm text-slate-400">
-								Bấm "Tìm kiếm" để AI đề xuất các công trình liên
+								Bấm "AI đề xuất" để tạo danh sách công trình liên
 								quan.
+							</p>
+						)}
+						{!rwResult?.related_work_matrix.length && keywords.length === 0 && (
+							<p className="py-6 text-center text-sm text-slate-400">
+								Thêm từ khóa ở cột bên trái để bật đề xuất related-work.
 							</p>
 						)}
 
@@ -414,11 +538,13 @@ export function Step2_RelatedWorkGap({
 								<Button
 									className="mt-4 w-full"
 									onClick={confirmRelatedWork}
-									disabled={rwSaving}
+									disabled={rwSaving || rwConfirmed}
 								>
 									{rwSaving
 										? 'Đang lưu...'
-										: 'Xác nhận bảng related-work'}
+										: rwConfirmed
+											? 'Đã xác nhận bảng related-work'
+											: 'Xác nhận bảng related-work'}
 								</Button>
 							</>
 						)}
@@ -440,10 +566,22 @@ export function Step2_RelatedWorkGap({
 						</CardTitle>
 					</CardHeader>
 					<CardContent className="space-y-3">
-						{!gapResult && (
+						{!rwConfirmed && (
+							<Alert variant="warning">
+								<AlertTitle>Research gap đang bị khóa</AlertTitle>
+								<AlertDescription>
+									Hãy xác nhận bảng related-work hiện tại trước khi nhập hoặc gửi hướng nghiên cứu.
+								</AlertDescription>
+							</Alert>
+						)}
+
+						<fieldset
+							disabled={!rwConfirmed}
+							className={`space-y-3 ${!rwConfirmed ? 'opacity-50' : ''}`}
+						>
+						{!gapResult && rwConfirmed && (
 							<p className="text-sm text-slate-400">
-								Sau khi có bảng related-work, bấm 1 hướng bên
-								dưới để AI đề xuất gap.
+								Nhập một hướng nghiên cứu để AI đề xuất gap từ bảng related-work đã xác nhận.
 							</p>
 						)}
 
@@ -469,6 +607,15 @@ export function Step2_RelatedWorkGap({
 							</ul>
 						)}
 
+						{selectedGapOption && (
+							<Alert variant="success">
+								<AlertTitle>
+									<Check className="h-4 w-4" /> Đã chọn hướng
+								</AlertTitle>
+								<AlertDescription>{selectedGapOption.label}</AlertDescription>
+							</Alert>
+						)}
+
 						<div>
 							<p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
 								Bạn muốn tập trung vào hướng nào?
@@ -477,16 +624,19 @@ export function Step2_RelatedWorkGap({
 								{gapResult?.options_for_user?.map((opt) => (
 									<Button
 										key={opt.id}
-										variant="outline"
+										variant={
+											selectedGapOption?.id === opt.id
+												? 'default'
+												: 'outline'
+										}
 										size="sm"
 										className="h-auto justify-start whitespace-normal py-2 text-left text-xs"
-										disabled={gapLoading}
-										onClick={() =>
-											proposeGap(
-												`Chọn hướng ${opt.id}: ${opt.label}`,
-											)
-										}
+										disabled={gapLoading || gapSaving}
+										onClick={() => saveGapSelection(opt)}
 									>
+										{selectedGapOption?.id === opt.id && (
+											<Check className="h-3.5 w-3.5" />
+										)}
 										<span className="font-mono">
 											{opt.id}.
 										</span>{' '}
@@ -498,6 +648,7 @@ export function Step2_RelatedWorkGap({
 							<div className="mt-2 flex gap-1.5">
 								<Input
 									placeholder="E. Hướng khác..."
+									disabled={!rwConfirmed}
 									value={customDirection}
 									onChange={(e) =>
 										setCustomDirection(e.target.value)
@@ -507,13 +658,12 @@ export function Step2_RelatedWorkGap({
 									size="sm"
 									variant="outline"
 									disabled={
-										!customDirection.trim() || gapLoading
+										!rwConfirmed ||
+										!customDirection.trim() ||
+										gapLoading ||
+										gapSaving
 									}
-									onClick={() =>
-										proposeGap(
-											`Bỏ qua các lựa chọn trên, tạo gap theo hướng sau: ${customDirection}`,
-										)
-									}
+									onClick={submitCustomDirection}
 								>
 									{gapLoading ? (
 										<Loader2 className="h-4 w-4 animate-spin" />
@@ -530,15 +680,7 @@ export function Step2_RelatedWorkGap({
 							</p>
 						)}
 
-						{!!gapResult?.gap_candidates.length && (
-							<Button
-								className="w-full"
-								onClick={confirmGap}
-								disabled={gapSaving}
-							>
-								{gapSaving ? 'Đang lưu...' : 'Xác nhận gap'}
-							</Button>
-						)}
+						</fieldset>
 					</CardContent>
 				</Card>
 			</div>

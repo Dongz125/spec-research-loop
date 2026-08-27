@@ -1,32 +1,61 @@
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
 
+export interface AuthUser {
+	id: string
+	email: string
+	name: string | null
+}
+
+export interface AuthResult {
+	token: string
+	user: AuthUser
+}
+
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
-	const userId = localStorage.getItem('specresearch_user_id')
+	const token = localStorage.getItem('specresearch_token')
 	const res = await fetch(`${API_URL}${path}`, {
+		...options,
 		headers: {
 			'Content-Type': 'application/json',
-			...(userId ? { 'x-user-id': userId } : {}), // Gắn header tại đây
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+			...options?.headers,
 		},
-		...options,
 	})
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({}))
+		if (res.status === 401 && token) {
+			localStorage.removeItem('specresearch_token')
+			localStorage.removeItem('specresearch_user_id')
+			window.location.reload()
+		}
 		throw new Error(body.error ?? `Lỗi ${res.status}`)
 	}
 	return res.json()
 }
 
 export const api = {
-	login: (email: string) =>
-		req<{ id: string; email: string; name: string }>('/auth/login', {
+	login: (email: string, password: string) =>
+		req<AuthResult>('/auth/login', {
 			method: 'POST',
-			body: JSON.stringify({ email }),
+			body: JSON.stringify({ email, password }),
 		}),
 
-	register: (email: string, name: string) =>
-		req<{ id: string; email: string; name: string }>('/auth/register', {
+	register: (email: string, name: string, password: string) =>
+		req<AuthResult>('/auth/register', {
 			method: 'POST',
-			body: JSON.stringify({ email, name }),
+			body: JSON.stringify({ email, name, password }),
+		}),
+
+	getMe: () => req<AuthUser>('/auth/me'),
+
+	updateMe: (input: {
+		name?: string
+		currentPassword?: string
+		newPassword?: string
+	}) =>
+		req<AuthUser>('/auth/me', {
+			method: 'PATCH',
+			body: JSON.stringify(input),
 		}),
 
 	getProjects: () => req<any[]>('/projects'),
@@ -35,6 +64,11 @@ export const api = {
 		req<{ id: string; title: string }>('/projects', {
 			method: 'POST',
 			body: JSON.stringify({ title }),
+		}),
+
+	deleteProject: (projectId: string) =>
+		req<{ id: string }>(`/projects/${projectId}`, {
+			method: 'DELETE',
 		}),
 
 	getProject: (projectId: string) =>
@@ -60,8 +94,7 @@ export const api = {
 			},
 		),
 
-	getVersions: (projectId: string) =>
-		req<any[]>(`/projects/${projectId}/versions`),
+	getVersions: (projectId: string) => req<any[]>(`/projects/${projectId}/versions`),
 
 	rollback: (projectId: string, versionNumber: number) =>
 		req<{ restored_step: string; data: unknown }>(

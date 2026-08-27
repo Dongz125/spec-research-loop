@@ -55,15 +55,23 @@ interface Props {
 }
 
 export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
+	const savedInterpretation = spec.idea_interpretation?.value as
+		| {
+				result: InterpreterResult
+				answers: Record<string, 'A' | 'B' | 'C' | 'D'>
+		  }
+		| undefined
 	const [idea, setIdea] = useState(
 		(spec.problem_statement?.value as string) ?? '',
 	)
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	const [result, setResult] = useState<InterpreterResult | null>(null)
+	const [result, setResult] = useState<InterpreterResult | null>(
+		savedInterpretation?.result ?? null,
+	)
 	const [answers, setAnswers] = useState<
 		Record<string, 'A' | 'B' | 'C' | 'D'>
-	>({})
+	>(savedInterpretation?.answers ?? {})
 	const [saving, setSaving] = useState(false)
 
 	function addTag(tag: string) {
@@ -107,6 +115,16 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 						value: idea,
 						status: 'CONFIRMED',
 						source: 'user',
+					},
+					search_keywords: {
+						value: result.detected_keywords ?? [],
+						status: 'CONFIRMED',
+						source: 'ai:interpreter',
+					},
+					idea_interpretation: {
+						value: { result, answers },
+						status: 'CONFIRMED',
+						source: 'user+ai:interpreter',
 					},
 				},
 				answerNotes || 'Xác nhận ý tưởng ban đầu',
