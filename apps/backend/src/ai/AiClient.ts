@@ -18,7 +18,7 @@ export const MODELS = {
 		reasoning: 'claude-sonnet-5',
 	},
 	gemini: { fast: 'gemini-3.6-flash', reasoning: 'gemini-3.6-flash' },
-	ollama: { fast: 'llama3.1:8b', reasoning: 'llama3.1:8b' },
+	ollama: { fast: 'qwen3.5:4b', reasoning: 'qwen3.5:4b' },
 } as const
 
 interface CallOptions {
@@ -86,16 +86,22 @@ async function callGemini(opts: CallOptions) {
 	}
 }
 
-// Ollama chạy local — https://ollama.com, cài rồi `ollama pull llama3.1:8b`
+// Ollama chạy local — https://ollama.com, cài rồi `ollama pull llama3.1:8b` // đang dùng qwen3.5:4b
 async function callOllama(opts: CallOptions) {
 	const url = `${process.env.OLLAMA_HOST ?? 'http://localhost:11434'}/api/chat`
+	const timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS ?? 120_000)
 	const res = await fetch(url, {
 		method: 'POST',
+		signal: AbortSignal.timeout(timeoutMs),
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			model: opts.model,
 			format: 'json',
+			think: false,
 			stream: false,
+			options: {
+				num_predict: opts.maxTokens ?? 2000,
+			},
 			messages: [
 				{ role: 'system', content: opts.systemPrompt },
 				{ role: 'user', content: JSON.stringify(opts.userPayload) },
@@ -104,8 +110,15 @@ async function callOllama(opts: CallOptions) {
 	})
 	const json = await res.json()
 	if (!res.ok) throw new Error(`Ollama error: ${JSON.stringify(json)}`)
+	const text = json.message?.content
+	if (typeof text !== 'string' || !text.trim()) {
+		const reason = json.done_reason === 'length'
+			? 'Model đã dùng hết giới hạn token trước khi tạo JSON.'
+			: 'Model trả về nội dung rỗng.'
+		throw new Error(`Ollama không tạo được kết quả. ${reason}`)
+	}
 	return {
-		text: json.message?.content ?? '{}',
+		text,
 		input_tokens: json.prompt_eval_count ?? 0,
 		output_tokens: json.eval_count ?? 0,
 	}

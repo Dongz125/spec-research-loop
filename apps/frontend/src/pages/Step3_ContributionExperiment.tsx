@@ -23,6 +23,7 @@ export function Step3_ContributionExperiment({
 	spec,
 	onFieldConfirmed,
 }: Props) {
+	const [error, setError] = useState<string | null>(null)
 	// --- Cột 1: Contribution & Claim ---
 	const [contribText, setContribText] = useState('')
 	const [contribPreview, setContribPreview] = useState<any>(
@@ -35,9 +36,14 @@ export function Step3_ContributionExperiment({
 	)
 	const [loadingContrib, setLoadingContrib] = useState(false)
 	const [savingContrib, setSavingContrib] = useState(false)
+	const [contribConfirmed, setContribConfirmed] = useState(
+		spec.contributions?.status === 'CONFIRMED' &&
+			spec.claim_evidence_matrix?.status === 'CONFIRMED',
+	)
 
 	async function handleGenContrib() {
 		setLoadingContrib(true)
+		setError(null)
 		try {
 			const res = await api.generate(
 				projectId,
@@ -46,15 +52,22 @@ export function Step3_ContributionExperiment({
 					'Tự động trích xuất contribution từ research gap.',
 			)
 			setContribPreview(res.preview)
-		} catch (e) {
-			console.error(e)
+			setContribConfirmed(false)
+			setExpPreview(null)
+			setExpConfirmed(false)
+			setBudgetPreview(null)
+			setBudgetConfirmed(false)
+		} catch (e: any) {
+			setError(e.message ?? 'Không tạo được contribution')
 		} finally {
 			setLoadingContrib(false)
 		}
 	}
 
 	async function confirmContrib() {
+		if (!contribPreview) return
 		setSavingContrib(true)
+		setError(null)
 		try {
 			await api.confirm(
 				projectId,
@@ -73,7 +86,10 @@ export function Step3_ContributionExperiment({
 				},
 				'Xác nhận Contribution & Claim',
 			)
+			setContribConfirmed(true)
 			onFieldConfirmed()
+		} catch (e: any) {
+			setError(e.message ?? 'Không chốt được contribution')
 		} finally {
 			setSavingContrib(false)
 		}
@@ -88,9 +104,13 @@ export function Step3_ContributionExperiment({
 	)
 	const [loadingExp, setLoadingExp] = useState(false)
 	const [savingExp, setSavingExp] = useState(false)
+	const [expConfirmed, setExpConfirmed] = useState(
+		spec.experimental_protocol?.status === 'CONFIRMED',
+	)
 
 	async function handleGenExp() {
 		setLoadingExp(true)
+		setError(null)
 		try {
 			const res = await api.generate(
 				projectId,
@@ -98,13 +118,20 @@ export function Step3_ContributionExperiment({
 				expText || 'Thiết kế thí nghiệm chứng minh các claim vừa tạo.',
 			)
 			setExpPreview(res.preview)
+			setExpConfirmed(false)
+			setBudgetPreview(null)
+			setBudgetConfirmed(false)
+		} catch (e: any) {
+			setError(e.message ?? 'Không tạo được kế hoạch thí nghiệm')
 		} finally {
 			setLoadingExp(false)
 		}
 	}
 
 	async function confirmExp() {
+		if (!expPreview) return
 		setSavingExp(true)
+		setError(null)
 		try {
 			await api.confirm(
 				projectId,
@@ -118,7 +145,10 @@ export function Step3_ContributionExperiment({
 				},
 				'Xác nhận Experimental Protocol',
 			)
+			setExpConfirmed(true)
 			onFieldConfirmed()
+		} catch (e: any) {
+			setError(e.message ?? 'Không chốt được kế hoạch thí nghiệm')
 		} finally {
 			setSavingExp(false)
 		}
@@ -133,9 +163,13 @@ export function Step3_ContributionExperiment({
 	)
 	const [loadingBudget, setLoadingBudget] = useState(false)
 	const [savingBudget, setSavingBudget] = useState(false)
+	const [budgetConfirmed, setBudgetConfirmed] = useState(
+		spec.compute_budget?.status === 'CONFIRMED',
+	)
 
 	async function handleGenBudget() {
 		setLoadingBudget(true)
+		setError(null)
 		try {
 			const res = await api.generate(
 				projectId,
@@ -144,13 +178,18 @@ export function Step3_ContributionExperiment({
 					'Ước lượng tài nguyên dựa trên kế hoạch thí nghiệm.',
 			)
 			setBudgetPreview(res.preview)
+			setBudgetConfirmed(false)
+		} catch (e: any) {
+			setError(e.message ?? 'Không tạo được ước lượng tài nguyên')
 		} finally {
 			setLoadingBudget(false)
 		}
 	}
 
 	async function confirmBudget() {
+		if (!budgetPreview) return
 		setSavingBudget(true)
+		setError(null)
 		try {
 			await api.confirm(
 				projectId,
@@ -164,7 +203,10 @@ export function Step3_ContributionExperiment({
 				},
 				'Xác nhận Compute Budget',
 			)
+			setBudgetConfirmed(true)
 			onFieldConfirmed()
+		} catch (e: any) {
+			setError(e.message ?? 'Không chốt được tài nguyên')
 		} finally {
 			setSavingBudget(false)
 		}
@@ -179,6 +221,11 @@ export function Step3_ContributionExperiment({
 				Biến research gap thành contribution, claim rõ ràng và thiết kế
 				các thí nghiệm kiểm chứng có tính khả thi.
 			</p>
+			{error && (
+				<p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
+					{error}
+				</p>
+			)}
 
 			<div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
 				{/* CỘT 1: CONTRIBUTION & CLAIM */}
@@ -267,10 +314,14 @@ export function Step3_ContributionExperiment({
 									variant="outline"
 									className="w-full border-blue-200 hover:bg-blue-50 text-blue-700"
 									onClick={confirmContrib}
-									disabled={savingContrib}
+									disabled={savingContrib || contribConfirmed}
 								>
 									{savingContrib ? (
 										'Đang lưu...'
+									) : contribConfirmed ? (
+										<>
+											<Check className="h-4 w-4 mr-1" /> Đã chốt Contribution
+										</>
 									) : (
 										<>
 											<Check className="h-4 w-4 mr-1" />{' '}
@@ -306,7 +357,7 @@ export function Step3_ContributionExperiment({
 							<Button
 								size="sm"
 								onClick={handleGenExp}
-								disabled={loadingExp || !contribPreview}
+								disabled={loadingExp || !contribConfirmed}
 								className="h-auto"
 							>
 								{loadingExp ? (
@@ -344,10 +395,14 @@ export function Step3_ContributionExperiment({
 									variant="outline"
 									className="w-full border-emerald-200 hover:bg-emerald-50 text-emerald-700"
 									onClick={confirmExp}
-									disabled={savingExp}
+									disabled={savingExp || expConfirmed}
 								>
 									{savingExp ? (
 										'Đang lưu...'
+									) : expConfirmed ? (
+										<>
+											<Check className="h-4 w-4 mr-1" /> Đã chốt Kế hoạch
+										</>
 									) : (
 										<>
 											<Check className="h-4 w-4 mr-1" />{' '}
@@ -383,7 +438,7 @@ export function Step3_ContributionExperiment({
 							<Button
 								size="sm"
 								onClick={handleGenBudget}
-								disabled={loadingBudget || !expPreview}
+								disabled={loadingBudget || !expConfirmed}
 								className="h-auto"
 							>
 								{loadingBudget ? (
@@ -453,10 +508,14 @@ export function Step3_ContributionExperiment({
 									variant="outline"
 									className="w-full border-purple-200 hover:bg-purple-50 text-purple-700"
 									onClick={confirmBudget}
-									disabled={savingBudget}
+									disabled={savingBudget || budgetConfirmed}
 								>
 									{savingBudget ? (
 										'Đang lưu...'
+									) : budgetConfirmed ? (
+										<>
+											<Check className="h-4 w-4 mr-1" /> Đã chốt Tài nguyên
+										</>
 									) : (
 										<>
 											<Check className="h-4 w-4 mr-1" />{' '}

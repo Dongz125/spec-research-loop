@@ -52,7 +52,14 @@ function reachedScreens(spec: ResearchSpec, currentStep: string) {
 	let reached = 1
 	if (spec.problem_statement?.value) reached = 2
 	if (spec.gap_candidates?.value) reached = 3
-	if (spec.compute_budget?.value) reached = 4
+	if (
+		spec.contributions?.status === 'CONFIRMED' &&
+		spec.claim_evidence_matrix?.status === 'CONFIRMED' &&
+		spec.experimental_protocol?.status === 'CONFIRMED' &&
+		spec.compute_budget?.status === 'CONFIRMED'
+	) {
+		reached = 4
+	}
 	if (currentStep === 'judge_resolution' || currentStep === 'final') reached = 5
 	return reached
 }
@@ -163,7 +170,14 @@ export default function App() {
 	function isStepCompleted(stepId: string) {
 		if (stepId === 'idea') return !!spec.problem_statement?.value
 		if (stepId === 'related_gap') return !!spec.gap_candidates?.value
-		if (stepId === 'contribution') return !!spec.compute_budget?.value
+		if (stepId === 'contribution') {
+			return (
+				spec.contributions?.status === 'CONFIRMED' &&
+				spec.claim_evidence_matrix?.status === 'CONFIRMED' &&
+				spec.experimental_protocol?.status === 'CONFIRMED' &&
+				spec.compute_budget?.status === 'CONFIRMED'
+			)
+		}
 		return true
 	}
 
