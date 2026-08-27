@@ -15,10 +15,25 @@ Trả về JSON theo schema:
 }`
 
 export async function runExperimentDesigner(context: any) {
-	return callAgent({
+	const result = await callAgent<{
+		experimental_protocol: Array<{
+			name: string
+			goal: string
+			config: Record<string, unknown>
+		}>
+	}>({
 		model: modelFor('reasoning'),
 		systemPrompt: SYSTEM_PROMPT,
 		userPayload: context,
 		maxTokens: 1500,
 	})
+
+	if (
+		!Array.isArray(result.data.experimental_protocol) ||
+		result.data.experimental_protocol.length === 0
+	) {
+		throw new Error('AI không trả về kế hoạch thí nghiệm hợp lệ. Vui lòng thử lại.')
+	}
+
+	return result
 }
