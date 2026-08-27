@@ -10,8 +10,67 @@ import { runExperimentDesigner } from '../ai/agents/experimentDesigner'
 import { runFeasibilityEstimator } from '../ai/agents/feasibilityEstimator'
 import { runJudgeResolutionProposer } from '../ai/agents/judgeResolutionProposer'
 import { StepId } from '../types'
+import { requireAuth } from '../auth'
 
 export const router = Router({mergeParams: true})
+
+const DOWNSTREAM_FIELDS: Partial<Record<StepId, string[]>> = {
+	idea_capture: [
+		'related_work_matrix',
+		'gap_candidates',
+		'selected_gap_direction',
+		'contributions',
+		'claim_evidence_matrix',
+		'experimental_protocol',
+		'compute_budget',
+		'risks_and_limitations',
+		'open_issues',
+	],
+	related_work: [
+		'gap_candidates',
+		'selected_gap_direction',
+		'contributions',
+		'claim_evidence_matrix',
+		'experimental_protocol',
+		'compute_budget',
+		'risks_and_limitations',
+		'open_issues',
+	],
+	gap: [
+		'contributions',
+		'claim_evidence_matrix',
+		'experimental_protocol',
+		'compute_budget',
+		'risks_and_limitations',
+		'open_issues',
+	],
+	contribution: [
+		'experimental_protocol',
+		'compute_budget',
+		'risks_and_limitations',
+		'open_issues',
+	],
+	experiment_design: [
+		'compute_budget',
+		'risks_and_limitations',
+		'open_issues',
+	],
+	feasibility: ['risks_and_limitations', 'open_issues'],
+}
+
+router.use(requireAuth)
+router.use(async (req: any, res, next) => {
+	try {
+		const [project] = await query(
+			'SELECT id FROM projects WHERE id = $1 AND user_id = $2 LIMIT 1',
+			[req.params.id, req.userId],
+		)
+		if (!project) return res.status(404).json({ error: 'Không tìm thấy project' })
+		next()
+	} catch (error) {
+		next(error)
+	}
+})
 
 // ---------------------------------------------------------------------
 // POST /steps/:step/generate
@@ -106,7 +165,16 @@ router.post('/steps/:step/confirm', async (req: any, res) => {
 		const prevData = prev?.data ?? {}
 		const nextVersion = (prev?.version_number ?? 0) + 1
 
-		const mergedData = { ...prevData, ...updatedFields }
+		const invalidatedFields = DOWNSTREAM_FIELDS[step] ?? []
+		const mergedData = { ...prevData }
+		const removedFields = invalidatedFields.filter(
+			(field) => field in mergedData,
+		)
+		for (const field of invalidatedFields) delete mergedData[field]
+		Object.assign(mergedData, updatedFields)
+		const changedFields = Array.from(
+			new Set([...Object.keys(updatedFields), ...removedFields]),
+		)
 
 		const { rows: inserted } = await client.query(
 			`INSERT INTO spec_versions
@@ -120,7 +188,7 @@ router.post('/steps/:step/confirm', async (req: any, res) => {
 				prev ? null : null, // set parent_version_id = prev.id nếu bạn lưu id ở trên
 				step,
 				JSON.stringify(mergedData),
-				Object.keys(updatedFields),
+				changedFields,
 				changeSummary ?? null,
 				'user',
 			],

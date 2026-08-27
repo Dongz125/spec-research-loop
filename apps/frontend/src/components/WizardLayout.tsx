@@ -1,7 +1,9 @@
-import { ReactNode } from 'react'
+import { ReactNode, useState } from 'react'
 import { Sparkles, User, ChevronLeft, ChevronRight, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { AccountModal } from '@/components/AccountModal'
+import type { AuthUser } from '@/lib/api'
 
 export interface WizardStep {
 	id: string
@@ -16,6 +18,10 @@ interface WizardLayoutProps {
 	onNavigate: (id: string) => void
 	projectTitle: string
 	onTitleChange: (title: string) => void
+	user: AuthUser | null
+	onUserUpdated: (user: AuthUser) => void
+	onHome: () => void
+	onLogout: () => void
 	onBack?: () => void
 	onNext?: () => void
 	children: ReactNode
@@ -28,10 +34,15 @@ export function WizardLayout({
 	onNavigate,
 	projectTitle,
 	onTitleChange,
+	user,
+	onUserUpdated,
+	onHome,
+	onLogout,
 	onBack,
 	onNext,
 	children,
 }: WizardLayoutProps) {
+	const [accountOpen, setAccountOpen] = useState(false)
 	const currentIndex = Math.max(
 		0,
 		steps.findIndex((s) => s.id === currentStepId),
@@ -42,16 +53,20 @@ export function WizardLayout({
 		<div className="flex min-h-screen flex-col bg-slate-50">
 			{/* ---------- Header ---------- */}
 			<header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur">
-				<div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
+				<div className="flex w-full items-center justify-between gap-4 px-6 py-3">
 					{/* Logo */}
-					<div className="flex shrink-0 items-center gap-2.5">
+					<button
+						type="button"
+						onClick={onHome}
+						className="flex shrink-0 items-center gap-2.5 rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+					>
 						<div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm">
 							<Sparkles className="h-4 w-4" />
 						</div>
 						<span className="hidden text-base font-semibold text-slate-900 sm:inline">
 							SpecResearch Loop
 						</span>
-					</div>
+					</button>
 
 					{/* Navigation */}
 					<nav className="flex flex-1 items-center justify-center gap-1 overflow-x-auto">
@@ -89,12 +104,25 @@ export function WizardLayout({
 							onChange={(e) => onTitleChange(e.target.value)}
 							className="hidden w-44 rounded-md bg-transparent text-right text-sm text-slate-500 focus:text-slate-900 focus:outline-none lg:block"
 						/>
-						<div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
+						<button
+							type="button"
+							aria-label="Mở tài khoản"
+							onClick={() => setAccountOpen(true)}
+							className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 transition-colors hover:bg-indigo-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+						>
 							<User className="h-4 w-4" />
-						</div>
+						</button>
 					</div>
 				</div>
 			</header>
+
+			<AccountModal
+				open={accountOpen}
+				user={user}
+				onClose={() => setAccountOpen(false)}
+				onUpdated={onUserUpdated}
+				onLogout={onLogout}
+			/>
 
 			{/* ---------- Content ---------- */}
 			<main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">

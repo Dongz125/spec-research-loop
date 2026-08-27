@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
-import { api } from './lib/api'
+import { api, type AuthUser } from './lib/api'
 import type { ResearchSpec } from './lib/types'
 import { WizardLayout, WizardStep } from './components/WizardLayout'
+import { CurrentSpecModal } from './components/CurrentSpecModal'
+import { Button } from './components/ui/button'
+import { Eye } from 'lucide-react'
 
 import { Dashboard } from './pages/Dashboard'
 import { Step1_Idea } from './pages/Step1_Idea'
@@ -18,17 +21,144 @@ const SCREENS: WizardStep[] = [
 	{ id: 'final', label: 'Spec cuối' },
 ]
 
+const STEP_TO_SCREEN: Record<string, string> = {
+	idea_capture: 'idea',
+	decomposition: 'idea',
+	related_work: 'related_gap',
+	gap: 'related_gap',
+	contribution: 'contribution',
+	experiment_design: 'contribution',
+	feasibility: 'contribution',
+	judge: 'judge',
+	judge_resolution: 'final',
+	final: 'final',
+}
+
+type HistoryMode = 'push' | 'replace' | 'none'
+
+function readProjectRoute() {
+	const match = window.location.pathname.match(
+		/^\/projects\/([^/]+)\/(idea|related_gap|contribution|judge|final)\/?$/,
+	)
+	if (!match) return null
+	return { projectId: decodeURIComponent(match[1]), screen: match[2] }
+}
+
+function projectPath(projectId: string, screen: string) {
+	return `/projects/${encodeURIComponent(projectId)}/${screen}`
+}
+
+function reachedScreens(spec: ResearchSpec, currentStep: string) {
+	let reached = 1
+	if (spec.problem_statement?.value) reached = 2
+	if (spec.gap_candidates?.value) reached = 3
+	if (spec.compute_budget?.value) reached = 4
+	if (currentStep === 'judge_resolution' || currentStep === 'final') reached = 5
+	return reached
+}
+
 export default function App() {
 	const [userId, setUserId] = useState<string | null>(
-		localStorage.getItem('specresearch_user_id'),
+		localStorage.getItem('specresearch_token')
+			? localStorage.getItem('specresearch_user_id')
+			: null,
 	)
 	const [projectId, setProjectId] = useState<string | null>(null)
+	const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
 	const [projectTitle, setProjectTitle] = useState(
 		'Ý tưởng nghiên cứu chưa đặt tên',
 	)
 	const [spec, setSpec] = useState<ResearchSpec>({})
+	const [specRevision, setSpecRevision] = useState('empty')
 	const [screen, setScreen] = useState('idea')
 	const [furthest, setFurthest] = useState(1)
+	const [specModalOpen, setSpecModalOpen] = useState(false)
+
+	function writeProjectRoute(id: string, targetScreen: string, mode: HistoryMode) {
+		if (mode === 'none') return
+		const method = mode === 'replace' ? 'replaceState' : 'pushState'
+		window.history[method]({}, '', projectPath(id, targetScreen))
+	}
+
+	function navigateToScreen(targetScreen: string, mode: HistoryMode = 'push') {
+		if (!projectId) return
+		setScreen(targetScreen)
+		writeProjectRoute(projectId, targetScreen, mode)
+	}
+
+	async function loadProject(
+		id: string,
+		requestedScreen?: string,
+		historyMode: HistoryMode = 'push',
+	) {
+		const { project, latest_spec } = await api.getProject(id)
+		const nextSpec = (latest_spec?.data ?? {}) as ResearchSpec
+		const nextFurthest = reachedScreens(nextSpec, project.currentStep)
+		const fallback = STEP_TO_SCREEN[project.currentStep] || 'idea'
+		const requestedIndex = SCREENS.findIndex((item) => item.id === requestedScreen)
+		const fallbackIndex = SCREENS.findIndex((item) => item.id === fallback)
+		const targetScreen =
+			requestedIndex >= 0 && requestedIndex < nextFurthest
+				? requestedScreen!
+				: fallbackIndex >= 0 && fallbackIndex < nextFurthest
+					? fallback
+					: SCREENS[nextFurthest - 1].id
+
+		setProjectTitle(project.title)
+		setSpec(nextSpec)
+		setSpecRevision(latest_spec?.id ?? 'empty')
+		setProjectId(id)
+		setScreen(targetScreen)
+		setFurthest(nextFurthest)
+		if (
+			historyMode === 'none' &&
+			requestedScreen &&
+			requestedScreen !== targetScreen
+		) {
+			writeProjectRoute(id, targetScreen, 'replace')
+		} else {
+			writeProjectRoute(id, targetScreen, historyMode)
+		}
+	}
+
+	function showDashboard(mode: HistoryMode = 'push') {
+		setProjectId(null)
+		setSpec({})
+		setSpecRevision('empty')
+		if (mode !== 'none') {
+			window.history[mode === 'replace' ? 'replaceState' : 'pushState'](
+				{},
+				'',
+				'/',
+			)
+		}
+	}
+
+	function logout() {
+		localStorage.removeItem('specresearch_user_id')
+		localStorage.removeItem('specresearch_token')
+		setUserId(null)
+		setCurrentUser(null)
+		showDashboard('replace')
+	}
+
+	useEffect(() => {
+		if (localStorage.getItem('specresearch_token')) {
+			void api.getMe().then(setCurrentUser)
+		}
+		const openCurrentUrl = () => {
+			const route = readProjectRoute()
+			if (route && localStorage.getItem('specresearch_token')) {
+				void loadProject(route.projectId, route.screen, 'none')
+			} else {
+				showDashboard('none')
+			}
+		}
+
+		openCurrentUrl()
+		window.addEventListener('popstate', openCurrentUrl)
+		return () => window.removeEventListener('popstate', openCurrentUrl)
+	}, [])
 
 	function isStepCompleted(stepId: string) {
 		if (stepId === 'idea') return !!spec.problem_statement?.value
@@ -37,48 +167,27 @@ export default function App() {
 		return true
 	}
 
-	async function loadProject(id: string) {
-		const { project, latest_spec } = await api.getProject(id)
-		setProjectTitle(project.title)
-		setSpec(latest_spec?.data ?? {})
-		setProjectId(id)
-
-		const stepMap: Record<string, string> = {
-			idea_capture: 'idea',
-			gap: 'related_gap',
-			feasibility: 'contribution',
-			judge: 'judge',
-			final: 'final',
-		}
-
-		const targetScreen = stepMap[project.currentStep] || 'idea'
-		setScreen(targetScreen)
-
-		const targetIdx = SCREENS.findIndex((s) => s.id === targetScreen)
-		setFurthest(Math.max(1, targetIdx + 1))
-	}
-
-	// NẾU CHƯA CÓ PROJECT NÀO ĐƯỢC CHỌN (Bao gồm cả trạng thái chưa đăng nhập)
 	if (!projectId) {
 		return (
 			<Dashboard
 				userId={userId}
-				onLoginSuccess={(id) => {
-					localStorage.setItem('specresearch_user_id', id)
-					setUserId(id)
+				user={currentUser}
+				onLoginSuccess={(user, token) => {
+					localStorage.setItem('specresearch_user_id', user.id)
+					localStorage.setItem('specresearch_token', token)
+					setUserId(user.id)
+					setCurrentUser(user)
+					const route = readProjectRoute()
+					if (route) void loadProject(route.projectId, route.screen, 'none')
 				}}
-				onLogout={() => {
-					localStorage.removeItem('specresearch_user_id')
-					setUserId(null)
-					setProjectId(null)
-				}}
-				onSelectProject={loadProject}
+				onLogout={logout}
+				onUserUpdated={setCurrentUser}
+				onSelectProject={(id) => void loadProject(id)}
 			/>
 		)
 	}
 
-	// ĐÃ CHỌN PROJECT -> VÀO LUỒNG WIZARD
-	const currentIndex = SCREENS.findIndex((s) => s.id === screen)
+	const currentIndex = SCREENS.findIndex((item) => item.id === screen)
 	const canGoNext = isStepCompleted(screen)
 
 	return (
@@ -87,69 +196,89 @@ export default function App() {
 			currentStepId={screen}
 			furthestReached={furthest}
 			onNavigate={(id) => {
-				const targetIdx = SCREENS.findIndex((s) => s.id === id)
-				if (targetIdx < furthest) {
-					setScreen(id)
-				}
+				const targetIndex = SCREENS.findIndex((item) => item.id === id)
+				if (targetIndex < furthest) navigateToScreen(id)
 			}}
 			projectTitle={projectTitle}
 			onTitleChange={setProjectTitle}
+			user={currentUser}
+			onUserUpdated={setCurrentUser}
+			onHome={() => showDashboard()}
+			onLogout={logout}
 			onBack={
 				currentIndex > 0
-					? () => setScreen(SCREENS[currentIndex - 1].id)
+					? () => navigateToScreen(SCREENS[currentIndex - 1].id)
 					: undefined
 			}
 			onNext={
 				canGoNext && currentIndex < SCREENS.length - 1
 					? () => {
-							const nextIdx = currentIndex + 1
-							setScreen(SCREENS[nextIdx].id)
-							setFurthest((prev) => Math.max(prev, nextIdx + 1))
+							const nextIndex = currentIndex + 1
+							setFurthest((previous) => Math.max(previous, nextIndex + 1))
+							navigateToScreen(SCREENS[nextIndex].id)
 						}
 					: undefined
 			}
 		>
-			<div className="mb-4">
+			<div className="mb-4 flex items-center justify-between gap-3">
 				<button
-					onClick={() => setProjectId(null)}
+					onClick={() => showDashboard()}
 					className="text-xs font-medium text-slate-500 hover:text-indigo-600 transition-colors"
 				>
 					← Quay lại danh sách dự án
 				</button>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => setSpecModalOpen(true)}
+				>
+					<Eye className="h-4 w-4" /> Xem spec hiện tại
+				</Button>
 			</div>
 
 			{screen === 'idea' && (
 				<Step1_Idea
 					projectId={projectId}
 					spec={spec}
-					onConfirmed={() => loadProject(projectId)}
+					onConfirmed={() => loadProject(projectId, 'idea', 'replace')}
 				/>
 			)}
 			{screen === 'related_gap' && (
 				<Step2_RelatedWorkGap
 					projectId={projectId}
 					spec={spec}
-					onFieldConfirmed={() => loadProject(projectId)}
+					onFieldConfirmed={() =>
+						loadProject(projectId, 'related_gap', 'replace')
+					}
 				/>
 			)}
 			{screen === 'contribution' && (
 				<Step3_ContributionExperiment
+					key={`${projectId}:${specRevision}:contribution`}
 					projectId={projectId}
 					spec={spec}
-					onFieldConfirmed={() => loadProject(projectId)}
+					onFieldConfirmed={() =>
+						loadProject(projectId, 'contribution', 'replace')
+					}
 				/>
 			)}
 			{screen === 'judge' && (
 				<Step4_Judge
 					projectId={projectId}
 					spec={spec}
-					onConfirmed={() => {
-						loadProject(projectId)
-						setScreen('final')
-					}}
+					onConfirmed={() => loadProject(projectId, 'final', 'replace')}
 				/>
 			)}
 			{screen === 'final' && <Step5_Final spec={spec} />}
+
+			<CurrentSpecModal
+				open={specModalOpen}
+				onClose={() => setSpecModalOpen(false)}
+				spec={spec}
+				currentStepLabel={SCREENS[currentIndex]?.label ?? screen}
+				currentStep={currentIndex + 1}
+				totalSteps={SCREENS.length}
+			/>
 		</WizardLayout>
 	)
 }

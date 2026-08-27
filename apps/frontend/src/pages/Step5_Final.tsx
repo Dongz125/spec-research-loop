@@ -2,41 +2,11 @@ import { CheckCircle2, Download, FileText, Sparkles } from 'lucide-react'
 import type { ResearchSpec } from '@/lib/types'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-
-const SECTION_LABELS: [keyof ResearchSpec, string][] = [
-	['problem_statement', 'Problem statement'],
-	['research_questions', 'Research questions'],
-	['related_work_matrix', 'Related-work matrix'],
-	['gap_candidates', 'Research gap'],
-	['contributions', 'Contributions'],
-	['claim_evidence_matrix', 'Claim–evidence matrix'],
-	['experimental_protocol', 'Experimental protocol'],
-	['compute_budget', 'Compute budget'],
-	['risks_and_limitations', 'Risks & limitations'],
-	['open_issues', 'Decision log'],
-]
-
-function toMarkdown(spec: ResearchSpec) {
-	let md = '# Research Specification\n\n'
-	for (const [key, label] of SECTION_LABELS) {
-		const field = spec[key]
-		md += `## ${label}\n\n`
-		md += field?.value
-			? '```json\n' + JSON.stringify(field.value, null, 2) + '\n```\n\n'
-			: '_Chưa có dữ liệu_\n\n'
-	}
-	return md
-}
-
-function download(filename: string, content: string, mime: string) {
-	const blob = new Blob([content], { type: mime })
-	const url = URL.createObjectURL(blob)
-	const a = document.createElement('a')
-	a.href = url
-	a.download = filename
-	a.click()
-	URL.revokeObjectURL(url)
-}
+import {
+	SPEC_SECTIONS,
+	downloadText,
+	specToMarkdown,
+} from '@/lib/specMarkdown'
 
 export function Step5_Final({ spec }: { spec: ResearchSpec }) {
 	return (
@@ -54,7 +24,7 @@ export function Step5_Final({ spec }: { spec: ResearchSpec }) {
 				<Card>
 					<CardContent className="p-6">
 						<div className="space-y-1 text-sm font-medium text-slate-700">
-							{SECTION_LABELS.map(([key, label], i) => {
+							{SPEC_SECTIONS.map(([key, label], i) => {
 								const hasData = !!spec[key]?.value
 								return (
 									<div
@@ -154,9 +124,9 @@ export function Step5_Final({ spec }: { spec: ResearchSpec }) {
 									variant="outline"
 									className="text-xs h-9"
 									onClick={() =>
-										download(
-											'research-spec.md',
-											toMarkdown(spec),
+									downloadText(
+										'research-spec.md',
+										specToMarkdown(spec),
 											'text/markdown',
 										)
 									}
@@ -168,7 +138,7 @@ export function Step5_Final({ spec }: { spec: ResearchSpec }) {
 									variant="outline"
 									className="text-xs h-9"
 									onClick={() =>
-										download(
+									downloadText(
 											'research-spec.json',
 											JSON.stringify(spec, null, 2),
 											'application/json',

@@ -1,144 +1,176 @@
 # SpecResearch Loop
 
-Hệ thống hoàn thiện ý tưởng nghiên cứu bằng bằng chứng và vòng lặp xác nhận.
-Đồ án được quản lý dưới dạng **Monorepo bằng Turborepo**, gồm 2 ứng dụng chính:
+Hệ thống hỗ trợ biến một ý tưởng nghiên cứu ban đầu thành research spec có cấu trúc, có version và được nhiều AI judge đánh giá độc lập.
+
+Dự án là monorepo pnpm/Turborepo:
 
 ```text
-specresearch-loop/
+research-loop/
 ├── apps/
-│   ├── backend/   # API (Node.js + TypeScript + Express + Postgres)
-│   └── frontend/  # Giao diện wizard 5 bước (React + TypeScript + Vite)
-├── package.json   # Quản lý dependencies chung của toàn dự án
-└── turbo.json     # Cấu hình Turborepo
+│   ├── backend/   # Express + TypeScript + PostgreSQL/Neon + Drizzle
+│   └── frontend/  # React + TypeScript + Vite + Tailwind CSS
+├── packages/      # ESLint, TypeScript và UI dùng chung của Turborepo
+├── package.json
+└── turbo.json
 ```
 
-Không dùng Docker — database dùng **Neon** (Postgres miễn phí trên cloud),
-AI dùng 1 trong 3 provider tuỳ bạn chọn (xem mục "Chạy miễn phí" bên dưới).
+## Yêu cầu
 
----
+- Node.js 18 trở lên
+- pnpm 9
+- PostgreSQL; cấu hình hiện tại hướng tới Neon
+- Một trong ba AI provider: Gemini, Anthropic hoặc Ollama
 
-## 1. Yêu cầu trước khi bắt đầu
+Không cần Docker.
 
-- Node.js **≥ 18** (kiểm tra: `node -v`)
-- Trình quản lý gói: `npm` hoặc `pnpm` (khuyên dùng cho monorepo)
-- Một tài khoản [neon.tech](https://neon.tech) (miễn phí, không cần thẻ)
-- Một trong các API key AI (xem mục 4)
+## Cài đặt
 
----
-
-## 2. Tạo database trên Neon
-
-1. Đăng ký tại [neon.tech](https://neon.tech) → **New Project**
-2. Đặt tên project (vd `specresearch-loop`), chọn region gần bạn
-3. Sau khi tạo xong, vào **Connection Details**, copy chuỗi kết nối dạng:
-    ```
-    postgres://<user>:<password>@<host>/<dbname>?sslmode=require
-    ```
-4. Mở **SQL Editor** trên Neon dashboard, dán toàn bộ nội dung file
-   `apps/backend/db/schema.sql` vào và **Run** — việc này tạo tất cả các bảng.
-
-> Nếu bước 4 báo lỗi thiếu extension `vector`, vào Neon dashboard →
-> **Extensions** → bật `pgvector` trước, rồi chạy lại schema.
-
----
-
-## 3. Cấu hình biến môi trường (.env)
-
-Bạn cần cấu hình `.env` cho cả `backend` và `frontend`.
-
-**Cho Backend:**
-
-```bash
-cd apps/backend
-cp .env.example .env
-```
-
-Mở `apps/backend/.env`, điền:
-
-- `DATABASE_URL` — chuỗi kết nối Neon ở bước 2
-- `AI_PROVIDER` — chọn `anthropic` / `gemini` / `ollama` (xem mục 4)
-- API key tương ứng với provider đã chọn
-
-**Cho Frontend:**
-
-```bash
-cd ../frontend
-cp .env.example .env
-```
-
-_(Mặc định frontend đã trỏ tới API `http://localhost:4000`, thường không cần sửa gì thêm)_
-
----
-
-## 4. Chọn AI provider — cách nào không tốn tiền
-
-Đặt `AI_PROVIDER` trong `apps/backend/.env` theo 1 trong 3 lựa chọn:
-
-### `gemini` — khuyến nghị, miễn phí thật, không cần thẻ
-
-1. Vào [aistudio.google.com/apikey](https://aistudio.google.com/apikey), đăng nhập bằng Google, bấm **Create API key**
-2. Dán vào `GEMINI_API_KEY` trong `.env`
-3. Có giới hạn số request/phút ở tầng free — nếu bước Judge (gọi 5 lần liên tiếp) bị lỗi rate limit, thử lại sau vài giây hoặc giảm số Judge chạy song song trong `judges.ts`.
-
-### `ollama` — 100% miễn phí, chạy trên máy bạn, không giới hạn
-
-1. Cài tại [ollama.com](https://ollama.com)
-2. Chạy `ollama pull llama3.1:8b` (hoặc model nhỏ hơn nếu máy yếu, vd `phi3:mini`)
-3. Để `AI_PROVIDER=ollama`, không cần điền API key nào.
-4. Chất lượng JSON output có thể kém ổn định hơn, nếu lỗi hãy thử model lớn hơn.
-
-### `anthropic` — chất lượng tốt nhất, có $5 dùng thử
-
-1. Tạo tài khoản tại [console.anthropic.com](https://console.anthropic.com)
-2. Dùng model `claude-haiku-4-5-20251001` (rẻ nhất) cho hầu hết các bước để tiết kiệm credit.
-
----
-
-## 5. Chạy dự án (Turborepo)
-
-Từ **thư mục gốc** của dự án (root), cài đặt toàn bộ dependencies cho cả frontend và backend:
+Tại thư mục gốc:
 
 ```bash
 pnpm install
 ```
 
-Khởi chạy đồng thời cả API và Giao diện chỉ với 1 lệnh duy nhất:
+Tạo file môi trường:
+
+```bash
+cp apps/backend/.env.example apps/backend/.env
+cp apps/frontend/.env.example apps/frontend/.env
+```
+
+Các biến backend quan trọng:
+
+```dotenv
+DATABASE_URL=postgres://...
+AUTH_SECRET=chuoi-ngau-nhien-toi-thieu-32-ky-tu
+AI_PROVIDER=gemini
+GEMINI_API_KEY=...
+FRONTEND_URL=http://localhost:5173
+PORT=4000
+```
+
+Tạo `AUTH_SECRET` bằng Node.js:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Không commit `.env` hoặc chia sẻ `AUTH_SECRET`. Đổi secret sẽ làm toàn bộ token đang tồn tại mất hiệu lực.
+
+## Database
+
+### Database mới
+
+Chạy toàn bộ file sau trong Neon SQL Editor:
+
+```text
+apps/backend/src/db/schema.sql
+```
+
+Schema sử dụng extension `pgcrypto` và `vector`. Nếu Neon chưa bật pgvector, bật extension trước khi chạy schema.
+
+### Database đã tạo từ phiên bản cũ
+
+Chạy migration:
+
+```text
+apps/backend/src/db/migrations/001_add_password_hash.sql
+```
+
+Các tài khoản cũ chưa có `password_hash` sẽ đặt mật khẩu bằng mật khẩu được nhập trong lần đăng nhập đầu tiên. Tài khoản đăng ký mới luôn yêu cầu mật khẩu tối thiểu 8 ký tự.
+
+## Chạy dự án
 
 ```bash
 pnpm dev
 ```
 
-- **Backend** tự động chạy tại: `http://localhost:4000`
-- **Frontend** tự động chạy tại: `http://localhost:5173`
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:4000`
 
----
+Kiểm tra production build:
 
-## 6. Luồng sử dụng
+```bash
+pnpm build
+```
 
-1. Ứng dụng tự tạo 1 project demo khi mở lần đầu (lưu `project_id` vào `localStorage` của trình duyệt).
-2. Ở mỗi bước: nhập yêu cầu vào ô prompt → **Tạo gợi ý** → xem/sửa JSON → **Xác nhận** để ghi thành version mới.
-3. **Lịch sử phiên bản** (góc trên) cho phép xem lại và quay về version cũ bất kỳ lúc nào — thao tác này không gọi AI.
-4. Ở bước 4, bấm **Chạy đánh giá** để 5 Judge độc lập chấm bản spec mới nhất.
-5. Bước 5 tổng hợp toàn bộ spec đã xác nhận, xuất ra Markdown hoặc JSON.
+## Xác thực
 
----
+- Mật khẩu được hash bằng Node.js `scrypt` với salt ngẫu nhiên; không lưu mật khẩu thô.
+- Đăng nhập/đăng ký trả bearer token ký HMAC-SHA256, có hạn 7 ngày.
+- Frontend lưu token trong `localStorage` và gửi qua header `Authorization: Bearer <token>`.
+- Các API project, version, generate, confirm và judge đều yêu cầu token và kiểm tra project thuộc người dùng hiện tại.
 
-## 7. Việc còn thiếu (dành cho bạn tự hoàn thiện)
+Đây là cơ chế gọn cho đồ án và triển khai một frontend. Nếu sau này cần đăng xuất từ xa, quản lý nhiều thiết bị hoặc refresh token, nên chuyển sang session lưu trong database hoặc access-token/refresh-token đầy đủ.
 
-Backend hiện có agent thật cho 3/7 bước (`idea_capture`, `gap`, `judge`).
-Các bước còn lại sẽ báo lỗi "chưa cấu hình agent". Đây là cơ hội để bạn thực hành:
+## Luồng sử dụng
 
-1. Copy `apps/backend/src/ai/agents/gapProposer.ts`, đổi system prompt + JSON schema đầu ra cho đúng nhiệm vụ.
-2. Thêm 1 case trong `apps/backend/src/routes/specs.ts` → `switch (step)`.
-3. Frontend không cần sửa gì — `StepField` đã tổng quát cho mọi field.
+1. Đăng ký hoặc đăng nhập bằng email và mật khẩu.
+2. Tạo/chọn một project.
+3. Nhập ý tưởng, nhận câu hỏi làm rõ và xác nhận.
+4. Tạo related-work matrix và research gap.
+5. Đề xuất contribution, claim/evidence, thí nghiệm và ước lượng feasibility.
+6. Chạy 5 judge độc lập, chọn phương án xử lý nhận xét.
+7. Xem spec cuối và xuất Markdown hoặc JSON.
 
----
+AI chỉ tạo preview. Mỗi lần người dùng xác nhận, backend tạo một snapshot mới trong `spec_versions`; dữ liệu cũ không bị ghi đè.
 
-## 8. Xử lý lỗi thường gặp
+JSON trong `spec_versions` là nguồn dữ liệu có cấu trúc để hệ thống tiếp tục xử lý. Từ nguồn này, giao diện “Xem spec hiện tại” và bước cuối tạo cùng một tài liệu `research-spec.md`, bao gồm cả các mục đã hoàn thành và mục còn thiếu.
 
-| Lỗi                                       | Nguyên nhân thường gặp                                                    |
-| ----------------------------------------- | ------------------------------------------------------------------------- |
-| `CORS error` trên frontend                | Backend chưa chạy, hoặc `FRONTEND_URL` trong backend/.env không khớp cổng |
-| `relation "spec_versions" does not exist` | Chưa chạy `db/schema.sql` trên Neon SQL Editor                            |
-| `Agent trả về JSON không hợp lệ`          | Model (đặc biệt Ollama) trả lời kèm text ngoài JSON — siết lại prompt     |
-| `Gemini error: 429`                       | Vượt giới hạn free tier — chờ vài giây rồi thử lại                        |
+Khi xác nhận lại một bước, snapshot mới tự loại bỏ dữ liệu của các bước phụ thuộc phía sau. Các bước đó bị khóa và phải thực hiện lại; snapshot cũ vẫn còn trong lịch sử phiên bản.
+
+Kết quả diễn giải, câu hỏi và lựa chọn ở bước 1 cũng được lưu trong snapshot để có thể xem lại. Mỗi màn hình có URL riêng theo dạng:
+
+```text
+/projects/:projectId/idea
+/projects/:projectId/related_gap
+/projects/:projectId/contribution
+/projects/:projectId/judge
+/projects/:projectId/final
+```
+
+Có thể refresh hoặc dùng Back/Forward của trình duyệt. URL của bước chưa được mở khóa sẽ được chuyển về bước hợp lệ gần nhất. Khi deploy frontend, web server cần cấu hình SPA fallback về `index.html` cho các URL này.
+
+## AI provider và agent
+
+Chọn provider bằng `AI_PROVIDER`:
+
+- `gemini`: cần `GEMINI_API_KEY`.
+- `anthropic`: cần `ANTHROPIC_API_KEY`.
+- `ollama`: chạy local, mặc định tại `http://localhost:11434`.
+
+Các agent hiện có:
+
+- Interpreter
+- Related-work Researcher
+- Gap Proposer
+- Contribution Proposer
+- Experiment Designer
+- Feasibility Estimator
+- 5 judge: gap, contribution, experiment, evidence và conference readiness
+- Judge Resolution Proposer
+
+Related-work agent hiện không truy cập internet và luôn đánh dấu kết quả là chưa xác minh. Phần RAG hiện lấy một số nguồn gần nhất trong database; vector similarity/embedding chưa được nối hoàn chỉnh.
+
+## Cấu trúc dữ liệu chính
+
+- `users`: tài khoản và password hash
+- `projects`: project thuộc từng người dùng
+- `spec_versions`: snapshot append-only của research spec
+- `decisions`: lựa chọn của người dùng
+- `sources`, `related_work_entries`: tài liệu và bảng related work
+- `experiments`: kế hoạch thí nghiệm
+- `judge_reviews`: kết quả đánh giá
+- `ai_call_logs`: audit/debug lời gọi AI, không dùng làm conversational memory
+
+## Lỗi thường gặp
+
+| Lỗi | Cách kiểm tra |
+| --- | --- |
+| `AUTH_SECRET phải có ít nhất 32 ký tự` | Thêm `AUTH_SECRET` hợp lệ vào `apps/backend/.env` rồi khởi động lại backend. |
+| `column password_hash does not exist` | Chạy migration `001_add_password_hash.sql`. |
+| `401` khi gọi project API | Đăng nhập lại; token có thể thiếu, sai hoặc đã hết hạn. |
+| CORS error | Kiểm tra backend đang chạy và `FRONTEND_URL` đúng với URL frontend. |
+| `relation spec_versions does not exist` | Chưa chạy `apps/backend/src/db/schema.sql`. |
+| Gemini `429` | Đã chạm giới hạn provider; chờ rồi thử lại. |
+| AI trả JSON lỗi | Thử lại hoặc dùng model/provider có structured output ổn định hơn. |

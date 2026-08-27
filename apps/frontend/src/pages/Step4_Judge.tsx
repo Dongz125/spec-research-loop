@@ -131,7 +131,7 @@ export function Step4_Judge({
 
 			await api.confirm(
 				projectId,
-				'judge',
+				'judge_resolution',
 				{},
 				`Quyết định sau Judge: ${decisionLabel || 'Không rõ'}`,
 			)
