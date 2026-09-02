@@ -20,7 +20,9 @@ có đủ chặt chẽ để chứng minh claim trong claim_evidence_matrix hay 
 (baseline, metric, ablation, generalization).`,
 	evidence_judge: `Bạn là Evidence Judge. Kiểm tra mỗi claim trong
 claim_evidence_matrix có nguồn evidence_source_ids thực sự hỗ trợ nó không,
-có bị gán nguồn sai hoặc không liên quan không.`,
+có bị gán nguồn sai hoặc không liên quan không. Chỉ coi citation là hợp lệ
+khi ID tồn tại trong related_work_matrix và nội dung abstract/did_what thực sự
+liên quan; DOI có thật không đồng nghĩa paper hỗ trợ claim.`,
 	conference_readiness_judge: `Bạn là Conference Readiness Judge. Đánh giá
 spec theo 5 tiêu chí: originality, significance, soundness, clarity,
 reproducibility. Không phán đoán khả năng được accept, chỉ đánh giá mức

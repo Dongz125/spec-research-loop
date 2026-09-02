@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import {
 	Search,
+	Plus,
 	Loader2,
 	Lightbulb,
 	X,
 	ShieldAlert,
 	Sparkles,
 	Check,
+	ExternalLink,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { ResearchSpec } from '@/lib/types'
@@ -32,17 +34,23 @@ import {
 } from '@/components/ui/table'
 
 const SOURCE_FILTERS = [
-	{ id: 'peer_reviewed', label: 'Paper peer-reviewed' },
-	{ id: 'proceedings', label: 'Proceedings chính thức' },
-	{ id: 'author_material', label: 'Tài liệu tác giả' },
-	{ id: 'survey', label: 'Survey có nguồn rõ ràng' },
+	{ id: 'article', label: 'Journal / conference article' },
+	{ id: 'preprint', label: 'Preprint' },
+	{ id: 'review', label: 'Review / survey' },
 ]
 
 interface RelatedWorkRow {
 	id: string
+	source_id: string
 	title: string
+	authors?: string
 	year?: number
+	venue?: string
+	url?: string
+	doi?: string | null
+	citation?: string
 	did_what: string
+	feedback_used?: string
 	gap_note: string
 	verified: boolean
 }
@@ -150,7 +158,17 @@ export function Step2_RelatedWorkGap({
 	)
 	const [rwSaving, setRwSaving] = useState(false)
 	const [rwConfirmed, setRwConfirmed] = useState(
-		spec.related_work_matrix?.status === 'CONFIRMED',
+		spec.related_work_matrix?.status === 'CONFIRMED' &&
+			(
+				(spec.related_work_matrix?.value as RelatedWorkRow[] | undefined) ??
+				[]
+			).every((row) => row.verified && row.source_id && row.url),
+	)
+	const sourcesGrounded = Boolean(
+		rwResult?.related_work_matrix.length &&
+			rwResult.related_work_matrix.every(
+				(row) => row.verified && row.source_id && row.url,
+			),
 	)
 
 	async function handleSearchRelatedWork() {
@@ -161,6 +179,17 @@ export function Step2_RelatedWorkGap({
 		setRwLoading(true)
 		setRwError(null)
 		try {
+			const sourceSearch = await api.searchSources(
+				projectId,
+				keywords,
+				activeFilters,
+			)
+			if (sourceSearch.sources.length === 0) {
+				setRwError(
+					'OpenAlex không tìm thấy nguồn phù hợp. Hãy dùng từ khóa tiếng Anh cụ thể hơn.',
+				)
+				return
+			}
 			const activeLabels = SOURCE_FILTERS.filter((f) =>
 				activeFilters.includes(f.id),
 			).map((f) => f.label)
@@ -182,7 +211,7 @@ export function Step2_RelatedWorkGap({
 		}
 	}
 
-	function removeRow(id: string) {
+	function removeRow(row: RelatedWorkRow) {
 		setRwConfirmed(false)
 		setGapResult(null)
 		setRwResult((prev) =>
@@ -190,7 +219,7 @@ export function Step2_RelatedWorkGap({
 				? {
 						...prev,
 						related_work_matrix: prev.related_work_matrix.filter(
-							(r) => r.id !== id,
+							(item) => item.id !== row.id,
 						),
 					}
 				: prev,
@@ -347,7 +376,7 @@ export function Step2_RelatedWorkGap({
 					<CardContent className="space-y-4">
 						<div className="flex gap-1.5">
 							<Input
-								placeholder="Nhập từ khoá..."
+								placeholder="Thêm từ khóa..."
 								value={keyword}
 								onChange={(e) => setKeyword(e.target.value)}
 								onKeyDown={(e) =>
@@ -359,7 +388,7 @@ export function Step2_RelatedWorkGap({
 								variant="outline"
 								onClick={addKeyword}
 							>
-								<Search className="h-4 w-4" />
+								<Plus className="h-4 w-4" />
 							</Button>
 						</div>
 
@@ -369,8 +398,12 @@ export function Step2_RelatedWorkGap({
 									key={k}
 									variant="secondary"
 									className="gap-1 cursor-pointer hover:bg-indigo-100"
-									onClick={() => setKeyword(k)}
-									title="Bấm để đưa từ khóa vào ô nhập"
+									onClick={() =>
+										setKeywords((prev) =>
+											prev.filter((item) => item !== k),
+										)
+									}
+									title="Bấm để xóa từ khóa"
 								>
 									{k}
 									<X
@@ -454,11 +487,11 @@ export function Step2_RelatedWorkGap({
 							{rwLoading ? (
 								<>
 									<Loader2 className="h-4 w-4 animate-spin" />{' '}
-									Đang đề xuất...
+									Đang tìm nguồn...
 								</>
 							) : (
 								<>
-									<Search className="h-4 w-4" /> AI đề xuất
+									<Search className="h-4 w-4" /> Tìm paper thật
 								</>
 							)}
 						</Button>
@@ -466,8 +499,8 @@ export function Step2_RelatedWorkGap({
 					<CardContent>
 						{!rwResult?.related_work_matrix.length && keywords.length > 0 && (
 							<p className="py-6 text-center text-sm text-slate-400">
-								Bấm "AI đề xuất" để tạo danh sách công trình liên
-								quan.
+								Bấm "Tìm paper thật" để tìm trên OpenAlex, sau đó AI
+								lập bảng từ các nguồn tìm được.
 							</p>
 						)}
 						{!rwResult?.related_work_matrix.length && keywords.length === 0 && (
@@ -478,17 +511,24 @@ export function Step2_RelatedWorkGap({
 
 						{!!rwResult?.related_work_matrix.length && (
 							<>
-								<Alert variant="warning" className="mb-3">
-									<AlertTitle>
-										<ShieldAlert className="h-4 w-4" /> Cần
-										xác minh thủ công
-									</AlertTitle>
-									<AlertDescription>
-										AI không truy cập internet — hãy kiểm
-										tra lại từng nguồn trước khi dùng làm
-										bằng chứng chính thức.
-									</AlertDescription>
-								</Alert>
+								{sourcesGrounded ? (
+									<Alert className="mb-3 border-emerald-200 bg-emerald-50 text-emerald-800">
+										<AlertTitle>
+											<ShieldAlert className="h-4 w-4" /> Nguồn đã đối chiếu OpenAlex
+										</AlertTitle>
+										<AlertDescription>
+											Tiêu đề, tác giả, năm và DOI/URL lấy từ OpenAlex. AI chỉ phân tích
+											các source ID này; bạn vẫn nên đọc paper gốc trước khi công bố claim.
+										</AlertDescription>
+									</Alert>
+								) : (
+									<Alert variant="warning" className="mb-3">
+										<AlertTitle>Dữ liệu nguồn cũ chưa được xác minh</AlertTitle>
+										<AlertDescription>
+											Hãy bấm “Tìm paper thật” để thay thế bằng nguồn có UUID và DOI/URL từ OpenAlex.
+										</AlertDescription>
+									</Alert>
+								)}
 
 								<Table>
 									<TableHeader>
@@ -504,11 +544,28 @@ export function Step2_RelatedWorkGap({
 											(row) => (
 												<TableRow key={row.id}>
 													<TableCell className="font-medium text-slate-800">
-														{row.title}
+														{row.url ? (
+															<a
+																href={row.url}
+																target="_blank"
+																rel="noreferrer"
+																className="inline-flex items-start gap-1 text-indigo-700 hover:underline"
+															>
+																{row.title}
+																<ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
+															</a>
+														) : (
+															row.title
+														)}
 														{row.year && (
 															<span className="ml-1 text-xs text-slate-400">
 																({row.year})
 															</span>
+														)}
+														{row.citation && (
+															<p className="mt-1 text-[10px] font-normal leading-relaxed text-slate-500">
+																{row.citation}
+															</p>
 														)}
 													</TableCell>
 													<TableCell className="text-slate-600">
@@ -520,11 +577,7 @@ export function Step2_RelatedWorkGap({
 													<TableCell>
 														<button
 															className="text-slate-300 hover:text-red-500"
-															onClick={() =>
-																removeRow(
-																	row.id,
-																)
-															}
+											onClick={() => removeRow(row)}
 														>
 															<X className="h-3.5 w-3.5" />
 														</button>
@@ -538,7 +591,7 @@ export function Step2_RelatedWorkGap({
 								<Button
 									className="mt-4 w-full"
 									onClick={confirmRelatedWork}
-									disabled={rwSaving || rwConfirmed}
+									disabled={rwSaving || rwConfirmed || !sourcesGrounded}
 								>
 									{rwSaving
 										? 'Đang lưu...'
@@ -601,7 +654,29 @@ export function Step2_RelatedWorkGap({
 										key={g.id}
 										className="rounded-lg bg-indigo-50 p-2.5"
 									>
-										{g.text}
+										<p>{g.text}</p>
+										<div className="mt-2 space-y-1 border-t border-indigo-100 pt-2">
+											<p className="text-[10px] font-semibold uppercase text-indigo-500">
+												Nguồn hỗ trợ
+											</p>
+											{(g.evidence_source_ids || []).map((sourceId) => {
+												const source = rwResult?.related_work_matrix.find(
+													(row) => row.source_id === sourceId,
+												)
+												return source ? (
+													<a
+														key={sourceId}
+														href={source.url}
+														target="_blank"
+														rel="noreferrer"
+														className="flex items-start gap-1 text-[10px] leading-relaxed text-indigo-700 hover:underline"
+													>
+														<span>{source.citation || source.title}</span>
+														<ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
+													</a>
+												) : null
+											})}
+										</div>
 									</li>
 								))}
 							</ul>

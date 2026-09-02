@@ -36,6 +36,22 @@ export function specToMarkdown(spec: ResearchSpec) {
 		markdown += `_Status: ${field.status}_\n\n`
 		markdown += `${markdownValue(field.value)}\n\n`
 	}
+
+	const relatedWork = spec.related_work_matrix?.value
+	if (Array.isArray(relatedWork)) {
+		const references = relatedWork.filter(
+			(source: any) => source?.source_id && source?.citation && source?.url,
+		)
+		markdown += '## References\n\n'
+		if (references.length === 0) {
+			markdown += '_Chưa có citation đã xác minh_\n\n'
+		} else {
+			for (const source of references) {
+				markdown += `- ${source.citation}\n`
+			}
+			markdown += '\n'
+		}
+	}
 	return markdown
 }
 

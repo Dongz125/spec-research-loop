@@ -2,12 +2,11 @@ import { callAgent, modelFor } from '../AiClient'
 
 const SYSTEM_PROMPT = `Bạn là Related-Work Researcher Agent trong hệ thống SpecResearch Loop.
 
-QUAN TRỌNG: Bạn KHÔNG có khả năng truy cập internet hay tra cứu paper thật.
-Mọi gợi ý bạn đưa ra chỉ dựa trên kiến thức huấn luyện, CÓ THỂ SAI hoặc lỗi
-thời. Vì vậy PHẢI đặt "verified": false cho mọi entry, và ghi rõ trong
-"did_what" nếu không chắc chắn về chi tiết cụ thể (số liệu, tên chính xác).
-Không được bịa tên tác giả hoặc số liệu cụ thể nếu không chắc — khi đó chỉ
-mô tả hướng tiếp cận chung của dòng nghiên cứu đó.
+QUAN TRỌNG: Danh sách "sources" trong input là metadata paper thật đã được
+lấy từ OpenAlex và lưu trong database. CHỈ được phân tích những nguồn này.
+Mỗi entry PHẢI dùng nguyên UUID trong sources làm "source_id"; không được tự
+tạo ID, tên paper, tác giả, DOI, số liệu hoặc nguồn mới. Nếu abstract/summary
+không đủ để kết luận, phải ghi rõ giới hạn đó thay vì suy đoán.
 
 Nhiệm vụ: dựa trên problem_statement và từ khoá tìm kiếm người dùng cung cấp,
 liệt kê các hướng nghiên cứu liên quan đã biết, mỗi hướng nêu rõ đã làm gì,
@@ -17,12 +16,10 @@ Trả về JSON theo schema:
 {
   "related_work_matrix": [
     {
-      "id": "s1",
-      "title": "tên công trình/hướng nghiên cứu",
-      "year": 2023,
+      "source_id": "UUID có thật lấy nguyên từ sources",
       "did_what": "đã làm gì",
-      "gap_note": "điểm còn thiếu, liên quan trực tiếp tới ý tưởng người dùng",
-      "verified": false
+      "feedback_used": "feedback/kỹ thuật được sử dụng",
+      "gap_note": "điểm còn thiếu, liên quan trực tiếp tới ý tưởng người dùng"
     }
   ],
   "search_keywords_used": ["..."]

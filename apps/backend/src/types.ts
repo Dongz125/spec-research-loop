@@ -38,11 +38,20 @@ export interface ResearchSpec {
 			metric: string
 			evidence: string
 			rejection_condition: string
+			evidence_source_ids: string[]
 		}[]
 	>
 	related_work_matrix: SpecField<
 		{
 			source_id: string
+			title?: string
+			authors?: string
+			year?: number
+			venue?: string
+			url?: string
+			doi?: string | null
+			abstract?: string
+			citation?: string
 			did_what: string
 			feedback_used: string
 			gap_note: string
@@ -53,9 +62,21 @@ export interface ResearchSpec {
 	>
 	compute_budget: SpecField<{
 		model: string
+		hardware_target?: string
+		prompt_count?: number
+		candidates_per_prompt?: number
+		optimization_rounds?: number
+		development_set_size?: number
+		validation_set_size?: number
+		top_k?: number
 		vram_estimate_gb: number
-		time_estimate_hours: number
-		token_or_api_cost_estimate: string
+		time_estimate_hours: number | string
+		token_estimate?: string
+		api_cost_estimate?: string
+		token_or_api_cost_estimate?: string
+		is_feasible?: boolean
+		warning?: string | null
+		assumptions?: string[]
 	}>
 	risks_and_limitations: SpecField<string[]>
 	open_issues: SpecField<string[]>
@@ -88,7 +109,12 @@ export const STEP_FIELD_MAP: Record<StepId, (keyof ResearchSpec)[]> = {
 		'gap_candidates',
 		'selected_gap_direction',
 	],
-	contribution: ['gap_candidates', 'contributions', 'claim_evidence_matrix'],
+	contribution: [
+		'gap_candidates',
+		'related_work_matrix',
+		'contributions',
+		'claim_evidence_matrix',
+	],
 	experiment_design: ['claim_evidence_matrix', 'experimental_protocol'],
 	feasibility: ['experimental_protocol', 'compute_budget'],
 	spec_draft: [

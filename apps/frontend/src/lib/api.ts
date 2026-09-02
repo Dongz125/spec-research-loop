@@ -74,6 +74,15 @@ export const api = {
 	getProject: (projectId: string) =>
 		req<{ project: any; latest_spec: any }>(`/projects/${projectId}`),
 
+	searchSources: (projectId: string, keywords: string[], sourceTypes: string[]) =>
+		req<{ sources: Array<{ id: string; title: string; url: string }> }>(
+			`/projects/${projectId}/sources/search`,
+			{
+				method: 'POST',
+				body: JSON.stringify({ keywords, sourceTypes }),
+			},
+		),
+
 	generate: (projectId: string, step: string, instruction: string) =>
 		req<{ preview: unknown; based_on_version: number }>(
 			`/projects/${projectId}/steps/${step}/generate`,
