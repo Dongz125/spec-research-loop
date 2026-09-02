@@ -1,4 +1,6 @@
-import { query } from '../db'
+import { and, desc, eq } from 'drizzle-orm'
+import { db } from '../db/db'
+import { decisions, sources, specVersions } from '../db/schema'
 import { STEP_FIELD_MAP, ResearchSpec, StepId } from '../types'
 
 /**
@@ -16,17 +18,17 @@ export async function buildContext(
 	userInstruction: string,
 ) {
 	// 1) Lấy spec_version MỚI NHẤT — không lấy lịch sử version cũ
-	const [latest] = await query<{
-		data: ResearchSpec
-		version_number: number
-	}>(
-		`SELECT data, version_number FROM spec_versions
-     WHERE project_id = $1
-     ORDER BY version_number DESC LIMIT 1`,
-		[projectId],
-	)
+	const [latest] = await db
+		.select({
+			data: specVersions.data,
+			versionNumber: specVersions.versionNumber,
+		})
+		.from(specVersions)
+		.where(eq(specVersions.projectId, projectId))
+		.orderBy(desc(specVersions.versionNumber))
+		.limit(1)
 
-	const fullSpec = latest?.data ?? ({} as ResearchSpec)
+	const fullSpec = (latest?.data ?? {}) as ResearchSpec
 
 	// 2) Chỉ trích ra field mà step này thực sự cần (tra STEP_FIELD_MAP)
 	const relevantFields = STEP_FIELD_MAP[step]
@@ -37,41 +39,47 @@ export async function buildContext(
 
 	// 3) Chỉ lấy N quyết định GẦN NHẤT liên quan tới step này, ở dạng
 	//    tóm tắt 1 dòng — không lấy nguyên văn câu hỏi/giải thích cũ
-	const recentDecisions = await query<{
-		question: string
-		selected_option_id: string
-		user_note: string | null
-	}>(
-		`SELECT question, selected_option_id, user_note FROM decisions
-     WHERE project_id = $1 AND step = $2
-     ORDER BY created_at DESC LIMIT 3`,
-		[projectId, step],
-	)
+	const recentDecisions = await db
+		.select({
+			question: decisions.question,
+			selectedOptionId: decisions.selectedOptionId,
+			userNote: decisions.userNote,
+		})
+		.from(decisions)
+		.where(
+			and(eq(decisions.projectId, projectId), eq(decisions.step, step)),
+		)
+		.orderBy(desc(decisions.createdAt))
+		.limit(3)
 
 	const decisionSummary = recentDecisions.map(
 		(d) =>
-			`Đã chọn "${d.selected_option_id}" cho câu hỏi: ${d.question}` +
-			(d.user_note ? ` (ghi chú: ${d.user_note})` : ''),
+			`Đã chọn "${d.selectedOptionId}" cho câu hỏi: ${d.question}` +
+			(d.userNote ? ` (ghi chú: ${d.userNote})` : ''),
 	)
 
 	// 4) Nếu step cần related-work, KHÔNG lấy full text papers — chỉ lấy
 	//    top-k đoạn tóm tắt liên quan nhất (RAG). Ví dụ dùng pgvector:
 	//
-	//    const topSources = await query(
-	//      `SELECT id, title, summary FROM sources
-	//       WHERE project_id = $1
-	//       ORDER BY embedding <=> $2 LIMIT 6`,
-	//      [projectId, queryEmbedding]
-	//    );
 	//
 	// Ở bản khởi tạo này để đơn giản, ta chỉ lấy 6 nguồn mới nhất:
 	let topSources: unknown[] = []
 	if (step === 'related_work' || step === 'gap') {
-		topSources = await query(
-			`SELECT id, title, authors, year, summary FROM sources
-       WHERE project_id = $1 ORDER BY created_at DESC LIMIT 6`,
-			[projectId],
-		)
+		topSources = await db
+			.select({
+				id: sources.id,
+				title: sources.title,
+				authors: sources.authors,
+				year: sources.year,
+				venue: sources.venue,
+				url: sources.url,
+				summary: sources.summary,
+				reliability_score: sources.reliabilityScore,
+			})
+			.from(sources)
+			.where(eq(sources.projectId, projectId))
+			.orderBy(desc(sources.createdAt))
+			.limit(8)
 	}
 
 	return {
@@ -79,6 +87,6 @@ export async function buildContext(
 		recent_decisions: decisionSummary,
 		sources: topSources,
 		user_instruction: userInstruction,
-		current_version: latest?.version_number ?? 0,
+		current_version: latest?.versionNumber ?? 0,
 	}
 }

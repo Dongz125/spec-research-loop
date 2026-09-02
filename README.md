@@ -45,6 +45,8 @@ DATABASE_URL=postgres://...
 AUTH_SECRET=chuoi-ngau-nhien-toi-thieu-32-ky-tu
 AI_PROVIDER=gemini
 GEMINI_API_KEY=...
+OPENALEX_API_KEY=... # key miễn phí; nên cấu hình để tránh hạn mức anonymous/demo
+OPENALEX_EMAIL=you@example.com
 FRONTEND_URL=http://localhost:5173
 PORT=4000
 ```
@@ -150,7 +152,11 @@ Các agent hiện có:
 - 5 judge: gap, contribution, experiment, evidence và conference readiness
 - Judge Resolution Proposer
 
-Related-work agent hiện không truy cập internet và luôn đánh dấu kết quả là chưa xác minh. Phần RAG hiện lấy một số nguồn gần nhất trong database; vector similarity/embedding chưa được nối hoàn chỉnh.
+Nút tìm related-work gọi OpenAlex để lấy paper và metadata thật trước, sau đó lưu nguồn vào database. AI chỉ được phân tích các UUID nguồn đã lưu; backend loại mọi source ID do model tự tạo. Citation trong research gap và claim–evidence liên kết ngược tới DOI/URL OpenAlex. Metadata được đối chiếu qua OpenAlex, nhưng người dùng vẫn cần đọc paper gốc trước khi công bố một claim.
+
+OpenAlex có thể cho phép một lượng truy cập anonymous phục vụ thử nghiệm, nhưng ứng dụng nên cấu hình `OPENALEX_API_KEY` miễn phí và `OPENALEX_EMAIL` để có hạn mức riêng, tránh lỗi quota và cung cấp thông tin liên hệ phù hợp.
+
+Phần RAG hiện lấy một số nguồn gần nhất trong database; vector similarity/embedding chưa được nối hoàn chỉnh.
 
 ## Cấu trúc dữ liệu chính
 

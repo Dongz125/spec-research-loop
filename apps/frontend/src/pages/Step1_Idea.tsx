@@ -73,9 +73,13 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 		Record<string, 'A' | 'B' | 'C' | 'D'>
 	>(savedInterpretation?.answers ?? {})
 	const [saving, setSaving] = useState(false)
+	const [confirmed, setConfirmed] = useState(
+		spec.idea_interpretation?.status === 'CONFIRMED',
+	)
 
 	function addTag(tag: string) {
 		setIdea((prev) => (prev.trim().length ? `${prev.trim()} ${tag}` : tag))
+		setConfirmed(false)
 	}
 
 	async function handleAnalyze() {
@@ -86,6 +90,7 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 			const res = await api.generate(projectId, 'idea_capture', idea)
 			setResult(res.preview as InterpreterResult)
 			setAnswers({})
+			setConfirmed(false)
 		} catch (e: any) {
 			setError(e.message ?? 'Không phân tích được ý tưởng')
 		} finally {
@@ -129,6 +134,7 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 				},
 				answerNotes || 'Xác nhận ý tưởng ban đầu',
 			)
+			setConfirmed(true)
 			onConfirmed()
 		} catch (e: any) {
 			setError(e.message ?? 'Không lưu được xác nhận')
@@ -164,7 +170,10 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 							rows={9}
 							placeholder='Vd: "Tôi muốn xây dựng phương pháp tự động tối ưu prompt nhiều vòng để giảm hallucination khi LLM trích xuất thông tin từ paper."'
 							value={idea}
-							onChange={(e) => setIdea(e.target.value)}
+							onChange={(e) => {
+								setIdea(e.target.value)
+								if (e.target.value !== idea) setConfirmed(false)
+							}}
 						/>
 
 						<div className="mt-3 flex flex-wrap gap-1.5">
@@ -304,12 +313,13 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 												}
 												size="sm"
 												className="h-auto justify-start whitespace-normal py-2 text-left text-xs"
-												onClick={() =>
-													setAnswers((prev) => ({
-														...prev,
-														[q.id]: opt.id,
-													}))
-												}
+											onClick={() => {
+												setAnswers((prev) => ({
+													...prev,
+													[q.id]: opt.id,
+												}))
+												if (!selected) setConfirmed(false)
+											}}
 											>
 												<span className="font-mono">
 													{opt.id}.
@@ -325,11 +335,24 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 
 					{result && (
 						<Button
-							className="w-full"
+							className={
+								confirmed
+									? 'w-full bg-slate-200 text-slate-500 hover:bg-slate-200 disabled:opacity-100'
+									: 'w-full'
+							}
 							onClick={handleConfirmAll}
-							disabled={!allAnswered || saving}
+							disabled={!allAnswered || saving || confirmed}
 						>
-							{saving ? 'Đang lưu...' : 'Xác nhận & lưu ý tưởng'}
+							{saving ? (
+								'Đang lưu...'
+							) : confirmed ? (
+								<>
+									<CheckCircle2 className="h-4 w-4" /> Đã xác
+									nhận &amp; lưu ý tưởng
+								</>
+							) : (
+								'Xác nhận & lưu ý tưởng'
+							)}
 						</Button>
 					)}
 				</div>

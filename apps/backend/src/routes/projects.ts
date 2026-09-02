@@ -5,10 +5,12 @@ import { db } from '../db/db'
 import { projects, specVersions } from '../db/schema'
 
 export const router = Router()
+const asyncHandler = (handler: (...args: any[]) => Promise<unknown>) =>
+	(req: any, res: any, next: any) => Promise.resolve(handler(req, res, next)).catch(next)
 
 router.use(requireAuth)
 
-router.post('/', async (req: any, res) => {
+router.post('/', asyncHandler(async (req: any, res) => {
 	const { title } = req.body
 	const [project] = await db
 		.insert(projects)
@@ -18,17 +20,17 @@ router.post('/', async (req: any, res) => {
 		})
 		.returning()
 	res.status(201).json(project)
-})
+}))
 
-router.get('/', async (req: any, res) => {
+router.get('/', asyncHandler(async (req: any, res) => {
 	const rows = await db.query.projects.findMany({
 		where: eq(projects.userId, req.userId),
 		orderBy: [desc(projects.updatedAt)],
 	})
 	res.json(rows)
-})
+}))
 
-router.get('/:id', async (req: any, res) => {
+router.get('/:id', asyncHandler(async (req: any, res) => {
 	const [project] = await db
 		.select()
 		.from(projects)
@@ -43,9 +45,9 @@ router.get('/:id', async (req: any, res) => {
 		.limit(1)
 
 	res.json({ project, latest_spec: latestSpec ?? null })
-})
+}))
 
-router.delete('/:id', async (req: any, res) => {
+router.delete('/:id', asyncHandler(async (req: any, res) => {
 	const [deleted] = await db
 		.delete(projects)
 		.where(and(eq(projects.id, req.params.id), eq(projects.userId, req.userId)))
@@ -53,4 +55,4 @@ router.delete('/:id', async (req: any, res) => {
 
 	if (!deleted) return res.status(404).json({ error: 'Không tìm thấy project' })
 	res.json({ id: deleted.id })
-})
+}))

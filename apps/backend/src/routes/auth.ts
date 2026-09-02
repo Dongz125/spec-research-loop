@@ -10,6 +10,8 @@ import { db } from '../db/db'
 import { users } from '../db/schema'
 
 export const router = Router()
+const asyncHandler = (handler: (...args: any[]) => Promise<unknown>) =>
+	(req: any, res: any, next: any) => Promise.resolve(handler(req, res, next)).catch(next)
 
 function normalizeEmail(value: unknown) {
 	return typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -30,7 +32,7 @@ function authResponse(user: { id: string; email: string; name: string | null }) 
 	}
 }
 
-router.post('/login', async (req, res) => {
+router.post('/login', asyncHandler(async (req, res) => {
 	const email = normalizeEmail(req.body.email)
 	const { password } = req.body
 	if (!email) return res.status(400).json({ error: 'Vui lòng nhập email' })
@@ -52,9 +54,9 @@ router.post('/login', async (req, res) => {
 	}
 
 	res.json(authResponse(user))
-})
+}))
 
-router.post('/register', async (req, res) => {
+router.post('/register', asyncHandler(async (req, res) => {
 	const email = normalizeEmail(req.body.email)
 	const name = typeof req.body.name === 'string' ? req.body.name.trim() : ''
 	const { password } = req.body
@@ -77,15 +79,15 @@ router.post('/register', async (req, res) => {
 		.returning()
 
 	res.status(201).json(authResponse(newUser))
-})
+}))
 
-router.get('/me', requireAuth, async (req: any, res) => {
+router.get('/me', requireAuth, asyncHandler(async (req: any, res) => {
 	const [user] = await db.select().from(users).where(eq(users.id, req.userId))
 	if (!user) return res.status(404).json({ error: 'Không tìm thấy tài khoản' })
 	res.json({ id: user.id, email: user.email, name: user.name })
-})
+}))
 
-router.patch('/me', requireAuth, async (req: any, res) => {
+router.patch('/me', requireAuth, asyncHandler(async (req: any, res) => {
 	const [user] = await db.select().from(users).where(eq(users.id, req.userId))
 	if (!user) return res.status(404).json({ error: 'Không tìm thấy tài khoản' })
 
@@ -122,4 +124,4 @@ router.patch('/me', requireAuth, async (req: any, res) => {
 		.where(eq(users.id, req.userId))
 		.returning()
 	res.json({ id: updated.id, email: updated.email, name: updated.name })
-})
+}))

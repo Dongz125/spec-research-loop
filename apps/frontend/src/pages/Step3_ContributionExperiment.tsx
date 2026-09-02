@@ -1,5 +1,17 @@
 import { useState } from 'react'
-import { Target, FlaskConical, Cpu, Loader2, Check } from 'lucide-react'
+import {
+	AlertTriangle,
+	Check,
+	Clock,
+	Coins,
+	Cpu,
+	Database,
+	ExternalLink,
+	FlaskConical,
+	HardDrive,
+	Loader2,
+	Target,
+} from 'lucide-react'
 import { api } from '@/lib/api'
 import type { ResearchSpec } from '@/lib/types'
 import {
@@ -24,6 +36,16 @@ export function Step3_ContributionExperiment({
 	onFieldConfirmed,
 }: Props) {
 	const [error, setError] = useState<string | null>(null)
+	const relatedSources =
+		(spec.related_work_matrix?.value as Array<{
+			source_id: string
+			title?: string
+			citation?: string
+			url?: string
+		}> | undefined) ?? []
+	const sourceById = new Map(
+		relatedSources.map((source) => [source.source_id, source]),
+	)
 	// --- Cột 1: Contribution & Claim ---
 	const [contribText, setContribText] = useState('')
 	const [contribPreview, setContribPreview] = useState<any>(
@@ -166,6 +188,7 @@ export function Step3_ContributionExperiment({
 	const [budgetConfirmed, setBudgetConfirmed] = useState(
 		spec.compute_budget?.status === 'CONFIRMED',
 	)
+	const budget = budgetPreview?.compute_budget
 
 	async function handleGenBudget() {
 		setLoadingBudget(true)
@@ -306,6 +329,32 @@ export function Step3_ContributionExperiment({
 												</span>{' '}
 												{cem.evidence}
 											</p>
+											<div className="border-t border-slate-100 pt-1.5">
+												<span className="font-semibold text-indigo-700">
+													Citation:
+												</span>
+												<div className="mt-1 space-y-1">
+													{(cem.evidence_source_ids || []).map((sourceId: string) => {
+														const source = sourceById.get(sourceId)
+														return source ? (
+															<a
+																key={sourceId}
+																href={source.url}
+																target="_blank"
+																rel="noreferrer"
+																className="flex items-start gap-1 text-[10px] leading-relaxed text-indigo-600 hover:underline"
+															>
+																<span>{source.citation || source.title || sourceId}</span>
+																<ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
+															</a>
+														) : (
+															<p key={sourceId} className="text-[10px] text-red-600">
+																Nguồn không còn tồn tại: {sourceId}
+															</p>
+														)
+													})}
+												</div>
+											</div>
 										</div>
 									))}
 								</div>
@@ -419,8 +468,13 @@ export function Step3_ContributionExperiment({
 				<Card className="flex flex-col">
 					<CardHeader>
 						<CardTitle className="text-sm flex items-center gap-1.5">
-							<Cpu className="h-4 w-4 text-purple-600" /> Kiểm tra
-							tính khả thi
+							<Cpu className="h-4 w-4 text-purple-600" />
+							Kiểm tra tính khả thi
+							{budget?.hardware_target && (
+								<span className="font-normal text-slate-500">
+									({budget.hardware_target})
+								</span>
+							)}
 						</CardTitle>
 						<CardDescription>
 							Tài nguyên &amp; Thời gian ước lượng
@@ -451,58 +505,95 @@ export function Step3_ContributionExperiment({
 
 						{budgetPreview && (
 							<div className="space-y-3 flex-1">
-								<div className="grid grid-cols-2 gap-2">
-									<div className="border rounded-md p-2 text-center bg-slate-50">
-										<p className="text-[10px] uppercase text-slate-500 font-semibold">
-											Model
-										</p>
-										<p className="text-xs font-medium">
-											{budgetPreview.compute_budget
-												?.model || 'N/A'}
-										</p>
-									</div>
-									<div className="border rounded-md p-2 text-center bg-slate-50">
-										<p className="text-[10px] uppercase text-slate-500 font-semibold">
-											VRAM
-										</p>
-										<p className="text-xs font-medium">
-											{
-												budgetPreview.compute_budget
-													?.vram_estimate_gb
-											}{' '}
-											GB
-										</p>
-									</div>
-									<div className="border rounded-md p-2 text-center bg-slate-50">
-										<p className="text-[10px] uppercase text-slate-500 font-semibold">
-											Thời gian
-										</p>
-										<p className="text-xs font-medium">
-											{
-												budgetPreview.compute_budget
-													?.time_estimate_hours
-											}{' '}
-											giờ
-										</p>
-									</div>
-									<div className="border rounded-md p-2 text-center bg-slate-50">
-										<p className="text-[10px] uppercase text-slate-500 font-semibold">
-											Chi phí
-										</p>
-										<p
-											className="text-xs font-medium truncate"
-											title={
-												budgetPreview.compute_budget
-													?.token_or_api_cost_estimate
-											}
+								<div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
+									{[
+										['Model', budget?.model],
+										['Số prompt', budget?.prompt_count],
+										['Candidate mỗi prompt', budget?.candidates_per_prompt],
+										['Số vòng', budget?.optimization_rounds],
+										['Dev set', budget?.development_set_size],
+										['Validation set', budget?.validation_set_size],
+										['Top-k giữ lại', budget?.top_k],
+									].map(([label, value]) => (
+										<div
+											key={label}
+											className="rounded-lg border border-purple-100 bg-purple-50/40 p-2 text-center"
 										>
-											{
-												budgetPreview.compute_budget
-													?.token_or_api_cost_estimate
-											}
+											<p className="text-[9px] font-semibold uppercase leading-tight text-purple-600">
+												{label}
+											</p>
+											<p className="mt-1 text-xs font-semibold text-slate-800">
+												{value ?? '—'}
+											</p>
+										</div>
+									))}
+								</div>
+
+								<div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white px-3">
+									{[
+										{
+											label: 'VRAM',
+											value: budget?.vram_estimate_gb
+												? `~ ${budget.vram_estimate_gb} GB`
+												: '—',
+											icon: HardDrive,
+										},
+										{
+											label: 'Thời gian',
+											value: budget?.time_estimate_hours
+												? `~ ${budget.time_estimate_hours} giờ`
+												: '—',
+											icon: Clock,
+										},
+										{
+											label: 'Token',
+											value:
+												budget?.token_estimate ||
+												budget?.token_or_api_cost_estimate ||
+												'—',
+											icon: Database,
+										},
+										{
+											label: 'Chi phí API',
+											value:
+												budget?.api_cost_estimate ||
+												budget?.token_or_api_cost_estimate ||
+												'—',
+											icon: Coins,
+										},
+									].map(({ label, value, icon: Icon }) => (
+										<div key={label} className="flex items-start gap-2 py-2.5 text-xs">
+											<Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-purple-600" />
+											<span className="font-semibold text-slate-700">{label}</span>
+											<span className="ml-auto max-w-[60%] text-right text-slate-600">
+												{value}
+											</span>
+										</div>
+									))}
+								</div>
+
+								{budget?.assumptions?.length > 0 && (
+									<div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+										<p className="text-[10px] font-semibold uppercase text-slate-500">
+											Giả định tính toán
+										</p>
+										<ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-slate-600">
+											{budget.assumptions.map((assumption: string, index: number) => (
+												<li key={`${index}-${assumption}`}>{assumption}</li>
+											))}
+										</ul>
+									</div>
+								)}
+
+								{(budget?.warning || budget?.is_feasible === false) && (
+									<div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+										<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+										<p>
+											{budget.warning ||
+												'Nhu cầu thí nghiệm đang vượt giới hạn tài nguyên. Hãy giảm số candidate hoặc số vòng.'}
 										</p>
 									</div>
-								</div>
+								)}
 								<Button
 									size="sm"
 									variant="outline"
