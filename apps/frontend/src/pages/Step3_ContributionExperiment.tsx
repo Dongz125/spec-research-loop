@@ -180,7 +180,11 @@ export function Step3_ContributionExperiment({
 	const [budgetText, setBudgetText] = useState('')
 	const [budgetPreview, setBudgetPreview] = useState<any>(
 		spec.compute_budget?.value
-			? { compute_budget: spec.compute_budget?.value }
+			? {
+					compute_budget: spec.compute_budget?.value,
+					risks_and_limitations: spec.risks_and_limitations?.value ?? [],
+					open_issues: spec.open_issues?.value ?? [],
+				}
 			: null,
 	)
 	const [loadingBudget, setLoadingBudget] = useState(false)
@@ -222,6 +226,16 @@ export function Step3_ContributionExperiment({
 						value: budgetPreview.compute_budget,
 						status: 'CONFIRMED',
 						source: 'user',
+					},
+					risks_and_limitations: {
+						value: budgetPreview.risks_and_limitations ?? [],
+						status: 'CONFIRMED',
+						source: 'user+ai:feasibility',
+					},
+					open_issues: {
+						value: budgetPreview.open_issues ?? [],
+						status: 'CONFIRMED',
+						source: 'user+ai:feasibility',
 					},
 				},
 				'Xác nhận Compute Budget',
@@ -580,6 +594,32 @@ export function Step3_ContributionExperiment({
 										<ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-slate-600">
 											{budget.assumptions.map((assumption: string, index: number) => (
 												<li key={`${index}-${assumption}`}>{assumption}</li>
+											))}
+										</ul>
+									</div>
+								)}
+
+								{budgetPreview.risks_and_limitations?.length > 0 && (
+									<div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+										<p className="text-[10px] font-semibold uppercase text-rose-700">
+											Rủi ro &amp; giới hạn
+										</p>
+										<ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-rose-800">
+											{budgetPreview.risks_and_limitations.map((item: string, index: number) => (
+												<li key={`${index}-${item}`}>{item}</li>
+											))}
+										</ul>
+									</div>
+								)}
+
+								{budgetPreview.open_issues?.length > 0 && (
+									<div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
+										<p className="text-[10px] font-semibold uppercase text-sky-700">
+											Vấn đề &amp; quyết định còn mở
+										</p>
+										<ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-sky-800">
+											{budgetPreview.open_issues.map((item: string, index: number) => (
+												<li key={`${index}-${item}`}>{item}</li>
 											))}
 										</ul>
 									</div>

@@ -178,6 +178,7 @@ export default function App() {
 				spec.compute_budget?.status === 'CONFIRMED'
 			)
 		}
+		if (stepId === 'judge') return false
 		return true
 	}
 
@@ -233,6 +234,7 @@ export default function App() {
 						}
 					: undefined
 			}
+			hideNext={screen === 'judge'}
 		>
 			<div className="mb-4 flex items-center justify-between gap-3">
 				<button
@@ -280,6 +282,9 @@ export default function App() {
 				<Step4_Judge
 					projectId={projectId}
 					spec={spec}
+					onSpecUpdated={() =>
+						loadProject(projectId, 'judge', 'replace')
+					}
 					onConfirmed={() => loadProject(projectId, 'final', 'replace')}
 				/>
 			)}

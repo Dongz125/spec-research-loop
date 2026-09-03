@@ -1,3 +1,5 @@
+import type { JudgeReview } from './types'
+
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
 
 export interface AuthUser {
@@ -112,7 +114,7 @@ export const api = {
 		),
 
 	runJudge: (projectId: string) =>
-		req<{ spec_version_id: string; reviews: any[] }>(
+		req<{ spec_version_id: string; reviews: JudgeReview[] }>(
 			`/projects/${projectId}/judge`,
 			{ method: 'POST' },
 		),

@@ -37,7 +37,7 @@ function reconstructAbstract(index?: Record<string, number[]>) {
 		.sort((a, b) => a[0] - b[0])
 		.map(([, word]) => word)
 		.join(' ')
-		.slice(0, 5000)
+		.slice(0, 1600)
 }
 
 export function normalizeDoi(value?: string | null) {
@@ -71,14 +71,48 @@ export async function searchOpenAlex(query: string, limit = 8) {
 	if (process.env.OPENALEX_API_KEY) {
 		params.set('api_key', process.env.OPENALEX_API_KEY)
 	}
+	if (process.env.OPENALEX_EMAIL) {
+		params.set('mailto', process.env.OPENALEX_EMAIL)
+	}
 
-	const response = await fetch(`https://api.openalex.org/works?${params}`, {
-		signal: AbortSignal.timeout(20_000),
-		headers: {
-			Accept: 'application/json',
-			'User-Agent': `SpecResearchLoop/1.0 (${process.env.OPENALEX_EMAIL || 'contact-not-configured'})`,
-		},
-	})
+	const configuredTimeout = Number(process.env.OPENALEX_TIMEOUT_MS ?? 45_000)
+	const timeoutMs = Number.isFinite(configuredTimeout)
+		? Math.min(Math.max(configuredTimeout, 5_000), 120_000)
+		: 45_000
+	const url = `https://api.openalex.org/works?${params}`
+	let response: Response | null = null
+	let lastError: unknown
+
+	for (let attempt = 1; attempt <= 2; attempt += 1) {
+		response = null
+		try {
+			response = await fetch(url, {
+				signal: AbortSignal.timeout(timeoutMs),
+				headers: {
+					Accept: 'application/json',
+					'User-Agent': `SpecResearchLoop/1.0 (${process.env.OPENALEX_EMAIL || 'contact-not-configured'})`,
+				},
+			})
+			if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) {
+				break
+			}
+		} catch (error) {
+			lastError = error
+			if (attempt === 2) break
+		}
+		await new Promise((resolve) => setTimeout(resolve, attempt * 750))
+	}
+
+	if (!response) {
+		const isTimeout =
+			lastError instanceof Error &&
+			(lastError.name === 'TimeoutError' || lastError.name === 'AbortError')
+		throw new Error(
+			isTimeout
+				? `OpenAlex phản hồi quá chậm sau 2 lần thử (${Math.round(timeoutMs / 1000)} giây/lần). Hãy kiểm tra kết nối mạng hoặc tăng OPENALEX_TIMEOUT_MS.`
+				: `Không thể kết nối OpenAlex: ${lastError instanceof Error ? lastError.message : 'không rõ lỗi mạng'}`,
+		)
+	}
 	const payload = (await response.json().catch(() => ({}))) as {
 		error?: string
 		message?: string

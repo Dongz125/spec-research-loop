@@ -28,6 +28,7 @@ const asyncHandler = (handler: (...args: any[]) => Promise<unknown>) =>
 
 const DOWNSTREAM_FIELDS: Partial<Record<StepId, string[]>> = {
 	idea_capture: [
+		'research_questions',
 		'related_work_matrix',
 		'gap_candidates',
 		'selected_gap_direction',
@@ -118,7 +119,7 @@ router.post('/sources/search', asyncHandler(async (req: any, res) => {
 	const openAlexResults = await searchOpenAlex(openAlexQuery, 20)
 	const found = openAlexResults
 		.filter((source) => sourceTypes.length === 0 || sourceTypes.includes(source.workType))
-		.slice(0, 8)
+		.slice(0, 10)
 	const stored = []
 	for (const source of found) {
 		const [existing] = await db
@@ -199,10 +200,27 @@ router.post('/steps/:step/generate', asyncHandler(async (req: any, res) => {
 	let result
 	switch (step) {
 		case 'idea_capture':
-			result = await runInterpreter(instruction, instruction)
+			{
+				const generated = await runInterpreter(instruction, instruction)
+				const data = generated.data as { research_questions?: unknown }
+				if (
+					!Array.isArray(data.research_questions) ||
+					data.research_questions.length === 0
+				) {
+					throw new Error(
+						'AI chưa tạo được Research Questions. Hãy phân tích lại ý tưởng.',
+					)
+				}
+				result = generated
+			}
 			break
 		case 'related_work':
 			{
+				if (!Array.isArray(context.sources) || context.sources.length < 5) {
+					throw new Error(
+						`OpenAlex mới cung cấp ${Array.isArray(context.sources) ? context.sources.length : 0} nguồn phù hợp. Cần ít nhất 5 nguồn; hãy thêm hoặc đổi từ khóa rồi tìm lại.`,
+					)
+				}
 				const generated = await runRelatedWorkResearcher(context)
 				const data = generated.data as {
 					related_work_matrix?: Array<{
@@ -218,9 +236,11 @@ router.post('/steps/:step/generate', asyncHandler(async (req: any, res) => {
 						(source): [string, any] => [source.id, source],
 					),
 				)
+				const seenSourceIds = new Set<string>()
 				const groundedRows = (data.related_work_matrix ?? []).flatMap((row) => {
 					const source = row.source_id ? sourceMap.get(row.source_id) : null
-					if (!source) return []
+					if (!source || seenSourceIds.has(source.id)) return []
+					seenSourceIds.add(source.id)
 					const doi =
 						typeof source.url === 'string' && source.url.includes('doi.org/')
 							? source.url
@@ -244,9 +264,9 @@ router.post('/steps/:step/generate', asyncHandler(async (req: any, res) => {
 						},
 					]
 				})
-				if (groundedRows.length === 0) {
+				if (groundedRows.length < 5) {
 					throw new Error(
-						'AI không sử dụng được nguồn OpenAlex đã lưu. Hãy điều chỉnh từ khóa và tìm lại.',
+						`AI chỉ phân tích hợp lệ được ${groundedRows.length}/5 nguồn OpenAlex tối thiểu. Nguồn đã tìm vẫn được giữ; hãy chạy lại bước phân tích related-work.`,
 					)
 				}
 				result = {
@@ -257,13 +277,23 @@ router.post('/steps/:step/generate', asyncHandler(async (req: any, res) => {
 			break
 		case 'gap':
 			{
+				const relatedRows = (context.spec_slice as any).related_work_matrix?.value
+				const verifiedSourceCount = new Set(
+					(Array.isArray(relatedRows) ? relatedRows : [])
+						.filter((row: any) => row?.verified && row?.source_id && row?.url)
+						.map((row: any) => row.source_id),
+				).size
+				if (verifiedSourceCount < 5) {
+					throw new Error(
+						`Cần ít nhất 5 nguồn related-work đã xác minh trước khi đề xuất research gap. Hiện có ${verifiedSourceCount} nguồn.`,
+					)
+				}
 				const generated = await runGapProposer(context)
 				const data = generated.data as {
 					gap_candidates?: Array<Record<string, any>>
 					options_for_user?: unknown[]
 					insufficient_evidence?: boolean
 				}
-				const relatedRows = (context.spec_slice as any).related_work_matrix?.value
 				const allowedIds = new Set(
 					(Array.isArray(relatedRows) ? relatedRows : [])
 						.map((row: any) => row.source_id)
@@ -341,10 +371,108 @@ router.post('/steps/:step/generate', asyncHandler(async (req: any, res) => {
 			result = await runExperimentDesigner(context)
 			break
 		case 'feasibility':
-			result = await runFeasibilityEstimator(context)
+			{
+				const generated = await runFeasibilityEstimator(context)
+				const data = generated.data as {
+					compute_budget?: unknown
+					risks_and_limitations?: unknown
+					open_issues?: unknown
+				}
+				if (
+					!data.compute_budget ||
+					!Array.isArray(data.risks_and_limitations) ||
+					data.risks_and_limitations.length === 0 ||
+					!Array.isArray(data.open_issues) ||
+					data.open_issues.length === 0
+				) {
+					throw new Error(
+						'AI chưa tạo đủ Compute Budget, Risks & Limitations và Open Issues. Hãy tạo lại kiểm tra tính khả thi.',
+					)
+				}
+				result = generated
+			}
 			break
 		case 'judge_resolution':
-			result = await runJudgeResolutionProposer(context)
+			{
+				const generated = await runJudgeResolutionProposer(context)
+				const data = generated.data as {
+					change_summary?: string
+					updated_fields?: Record<string, unknown>
+				}
+				const allowedFields = new Set([
+					'gap_candidates',
+					'selected_gap_direction',
+					'contributions',
+					'claim_evidence_matrix',
+					'experimental_protocol',
+					'compute_budget',
+					'risks_and_limitations',
+					'open_issues',
+				])
+				const updatedFields = Object.fromEntries(
+					Object.entries(data.updated_fields ?? {}).filter(
+						([field, value]) => allowedFields.has(field) && value !== undefined,
+					),
+				)
+				const changedFieldNames = Object.keys(updatedFields)
+				if (changedFieldNames.length === 0 || changedFieldNames.length > 3) {
+					throw new Error(
+						'AI phải đề xuất thay đổi từ 1 đến 3 field hợp lệ trong spec.',
+					)
+				}
+				for (const [field, value] of Object.entries(updatedFields)) {
+					const currentValue = (context.spec_slice as any)[field]?.value
+					const hasNestedSpecWrapper =
+						value !== null &&
+						typeof value === 'object' &&
+						'value' in value &&
+						'status' in value
+					const sameShape = Array.isArray(currentValue)
+						? Array.isArray(value)
+						: currentValue !== null && typeof currentValue === 'object'
+							? value !== null && typeof value === 'object' && !Array.isArray(value)
+							: typeof value === typeof currentValue
+					if (hasNestedSpecWrapper || !sameShape) {
+						throw new Error(`AI trả về sai cấu trúc cho field ${field}.`)
+					}
+				}
+
+				const relatedRows = (context.spec_slice as any).related_work_matrix?.value
+				const allowedSourceIds = new Set(
+					(Array.isArray(relatedRows) ? relatedRows : [])
+						.map((row: any) => row.source_id)
+						.filter(Boolean),
+				)
+				for (const field of ['gap_candidates', 'claim_evidence_matrix']) {
+					if (!(field in updatedFields)) continue
+					const rows = updatedFields[field]
+					if (
+						!Array.isArray(rows) ||
+						rows.length === 0 ||
+						rows.some(
+							(row: any) =>
+								!Array.isArray(row?.evidence_source_ids) ||
+								row.evidence_source_ids.length === 0 ||
+								row.evidence_source_ids.some(
+									(id: unknown) =>
+										typeof id !== 'string' || !allowedSourceIds.has(id),
+								),
+						)
+					) {
+						throw new Error(
+							`AI sửa ${field} nhưng không giữ liên kết citation hợp lệ.`,
+						)
+					}
+				}
+
+				result = {
+					...generated,
+					data: {
+						change_summary: data.change_summary || 'Áp dụng đề xuất của Judge',
+						updated_fields: updatedFields,
+					},
+				}
+			}
 			break
 		default:
 			return res
@@ -407,6 +535,58 @@ router.post('/steps/:step/confirm', asyncHandler(async (req: any, res) => {
 		)
 		for (const field of invalidatedFields) delete mergedData[field]
 		Object.assign(mergedData, updatedFields)
+
+		if (step === 'judge') {
+			const relatedRows = Array.isArray(prevData.related_work_matrix?.value)
+				? prevData.related_work_matrix.value
+				: []
+			const allowedSourceIds = new Set(
+				relatedRows.map((row: any) => row.source_id).filter(Boolean),
+			)
+			const citationRows = ['gap_candidates', 'claim_evidence_matrix'].flatMap(
+				(field) => {
+					const value = (updatedFields as any)[field]?.value
+					return value === undefined ? [] : [{ field, value }]
+				},
+			)
+			const citedIds = new Set<string>()
+			for (const { field, value } of citationRows) {
+				if (
+					!Array.isArray(value) ||
+					value.length === 0 ||
+					value.some(
+						(row: any) =>
+							!Array.isArray(row?.evidence_source_ids) ||
+							row.evidence_source_ids.length === 0 ||
+							row.evidence_source_ids.some((id: unknown) => {
+								if (typeof id !== 'string' || !allowedSourceIds.has(id)) {
+									return true
+								}
+								citedIds.add(id)
+								return false
+							}),
+					)
+				) {
+					throw new Error(
+						`Không thể áp dụng bản sửa vì ${field} có citation không hợp lệ.`,
+					)
+				}
+			}
+			if (citedIds.size > 0) {
+				const existingCitations = await tx
+					.select({ id: sources.id })
+					.from(sources)
+					.where(
+						and(
+							eq(sources.projectId, projectId),
+							inArray(sources.id, Array.from(citedIds)),
+						),
+					)
+				if (existingCitations.length !== citedIds.size) {
+					throw new Error('Một hoặc nhiều citation trong bản sửa không còn tồn tại.')
+				}
+			}
+		}
 
 		if (step === 'gap' || step === 'contribution') {
 			const confirmedSources = Array.isArray(prevData.related_work_matrix?.value)
@@ -598,20 +778,24 @@ router.post('/judge', asyncHandler(async (req: any, res) => {
 
 	const judgeResults = await runAllJudges(latest.data)
 
-	await db.insert(judgeReviews).values(
-		judgeResults.map(({ judge_name, result }) => {
-			const data = result.data as any
-			return {
+	const completedReviewRows = judgeResults.flatMap((review) => {
+		if (review.status !== 'completed') return []
+		const data = review.result.data
+		return [
+			{
 				specVersionId: latest.id,
-				judgeName: judge_name,
+				judgeName: review.judge_name,
 				issue: data.issue,
 				reasoning: data.reasoning,
 				severity: data.severity,
 				suggestion: data.suggestion,
 				rawOutput: data,
-			}
-		}),
-	)
+			},
+		]
+	})
+	if (completedReviewRows.length > 0) {
+		await db.insert(judgeReviews).values(completedReviewRows)
+	}
 
 	res.json({ spec_version_id: latest.id, reviews: judgeResults })
 }))
