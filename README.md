@@ -51,6 +51,11 @@ FRONTEND_URL=http://localhost:5173
 PORT=4000
 ```
 
+`AI_PROVIDER` có thể là `anthropic`, `gemini` hoặc `ollama`. Nếu bỏ trống,
+code hiện tại mặc định dùng `anthropic`, vì vậy cần đặt provider và credential
+đúng với môi trường trước khi gọi AI. Với Ollama, có thể cấu hình thêm
+`OLLAMA_HOST` và `OLLAMA_TIMEOUT_MS`.
+
 Tạo `AUTH_SECRET` bằng Node.js:
 
 ```bash
@@ -63,13 +68,21 @@ Không commit `.env` hoặc chia sẻ `AUTH_SECRET`. Đổi secret sẽ làm to�
 
 ### Database mới
 
-Chạy toàn bộ file sau trong Neon SQL Editor:
+Chạy toàn bộ file sau trong Neon SQL Editor hoặc bằng `psql`:
 
 ```text
 apps/backend/src/db/schema.sql
 ```
 
+Hoặc:
+
+```bash
+psql "$DATABASE_URL" -f apps/backend/src/db/schema.sql
+```
+
 Schema sử dụng extension `pgcrypto` và `vector`. Nếu Neon chưa bật pgvector, bật extension trước khi chạy schema.
+
+Project không có seed script; tài khoản, project và dữ liệu spec được tạo từ giao diện.
 
 ### Database đã tạo từ phiên bản cũ
 
@@ -78,6 +91,10 @@ Chạy migration:
 ```text
 apps/backend/src/db/migrations/001_add_password_hash.sql
 ```
+
+Trong development có thể dùng `pnpm --filter backend db:push`; lệnh này đọc
+`DATABASE_URL` từ `apps/backend/.env`. Với production nên dùng migration/SQL có
+kiểm soát thay vì `db:push`.
 
 Các tài khoản cũ chưa có `password_hash` sẽ đặt mật khẩu bằng mật khẩu được nhập trong lần đăng nhập đầu tiên. Tài khoản đăng ký mới luôn yêu cầu mật khẩu tối thiểu 8 ký tự.
 
@@ -140,6 +157,10 @@ Chọn provider bằng `AI_PROVIDER`:
 - `gemini`: cần `GEMINI_API_KEY`.
 - `anthropic`: cần `ANTHROPIC_API_KEY`.
 - `ollama`: chạy local, mặc định tại `http://localhost:11434`.
+
+Model và timeout Ollama được định nghĩa trong `apps/backend/src/ai/AiClient.ts`;
+cần tải đúng model trước khi chạy. Gemini có thể gặp 429/503 khi chạm quota,
+còn AI provider đều yêu cầu output JSON hợp lệ.
 
 Các agent hiện có:
 
