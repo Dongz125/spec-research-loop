@@ -37,14 +37,21 @@ export interface SpecVersion {
 	created_at: string
 }
 
-export interface JudgeReview {
-	judge_name: string
-	result: {
-		data: {
-			issue: string | null
-			reasoning: string
-			severity: 'MINOR' | 'MAJOR' | 'CRITICAL' | null
-			suggestion: string
-		}
-	}
+interface JudgeResultData {
+	issue: string | null
+	reasoning: string
+	severity: 'MINOR' | 'MAJOR' | 'CRITICAL' | null
+	suggestion: string
 }
+
+export type JudgeReview =
+	| {
+			judge_name: string
+			status: 'completed'
+			result: { data: JudgeResultData }
+	  }
+	| {
+			judge_name: string
+			status: 'failed'
+			error: string
+	  }

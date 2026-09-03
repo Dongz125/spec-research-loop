@@ -138,10 +138,15 @@ export const STEP_FIELD_MAP: Record<StepId, (keyof ResearchSpec)[]> = {
 		'related_work_matrix',
 	],
 	judge_resolution: [
-		'problem_statement',
+		'related_work_matrix',
+		'gap_candidates',
+		'selected_gap_direction',
 		'contributions',
 		'claim_evidence_matrix',
 		'experimental_protocol',
+		'compute_budget',
+		'risks_and_limitations',
+		'open_issues',
 	],
 	final: [
 		'problem_statement',

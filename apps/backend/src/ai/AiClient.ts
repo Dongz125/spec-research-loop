@@ -26,10 +26,36 @@ interface CallOptions {
 	systemPrompt: string
 	userPayload: unknown
 	maxTokens?: number
+	jsonSchema?: Record<string, unknown>
 }
 
 function parseJson<T>(raw: string): T {
-	return JSON.parse(raw.replace(/```json|```/g, '').trim())
+	const cleaned = raw.replace(/^\uFEFF/, '').replace(/```json|```/gi, '').trim()
+	const candidates = [cleaned]
+	const firstBrace = cleaned.indexOf('{')
+	const lastBrace = cleaned.lastIndexOf('}')
+	if (firstBrace >= 0 && lastBrace > firstBrace) {
+		candidates.push(cleaned.slice(firstBrace, lastBrace + 1))
+	}
+
+	for (const candidate of candidates) {
+		try {
+			return JSON.parse(candidate) as T
+		} catch {
+			// Local models sometimes emit invalid Markdown escapes such as \( or \*.
+			const normalizedEscapes = candidate.replace(
+				/\\(?!["\\/bfnrtu])/g,
+				'\\\\',
+			)
+			try {
+				return JSON.parse(normalizedEscapes) as T
+			} catch {
+				// Try the next candidate.
+			}
+		}
+	}
+
+	throw new SyntaxError('Model output does not contain a complete JSON object')
 }
 
 async function callAnthropic(opts: CallOptions) {
@@ -90,25 +116,45 @@ async function callGemini(opts: CallOptions) {
 async function callOllama(opts: CallOptions) {
 	const url = `${process.env.OLLAMA_HOST ?? 'http://localhost:11434'}/api/chat`
 	const timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS ?? 120_000)
-	const res = await fetch(url, {
-		method: 'POST',
-		signal: AbortSignal.timeout(timeoutMs),
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			model: opts.model,
-			format: 'json',
-			think: false,
-			stream: false,
-			options: {
-				num_predict: opts.maxTokens ?? 2000,
-			},
-			messages: [
-				{ role: 'system', content: opts.systemPrompt },
-				{ role: 'user', content: JSON.stringify(opts.userPayload) },
-			],
-		}),
-	})
-	const json = await res.json()
+	let res: Response
+	try {
+		res = await fetch(url, {
+			method: 'POST',
+			signal: AbortSignal.timeout(timeoutMs),
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: opts.model,
+				format: opts.jsonSchema ?? 'json',
+				think: false,
+				stream: false,
+				options: {
+					num_predict: opts.maxTokens ?? 2000,
+				},
+				messages: [
+					{ role: 'system', content: opts.systemPrompt },
+					{ role: 'user', content: JSON.stringify(opts.userPayload) },
+				],
+			}),
+		})
+	} catch (error) {
+		const isTimeout =
+			error instanceof Error &&
+			(error.name === 'TimeoutError' || error.name === 'AbortError')
+		throw new Error(
+			isTimeout
+				? `Ollama không hoàn tất phản hồi trong ${Math.round(timeoutMs / 1000)} giây. OpenAlex có thể đã tìm xong nguồn; model local đang quá tải hoặc context quá lớn.`
+				: `Không thể kết nối Ollama: ${error instanceof Error ? error.message : 'không rõ lỗi'}`,
+		)
+	}
+
+	let json: any
+	try {
+		json = await res.json()
+	} catch (error) {
+		throw new Error(
+			`Ollama trả về response không đọc được: ${error instanceof Error ? error.message : 'JSON không hợp lệ'}`,
+		)
+	}
 	if (!res.ok) throw new Error(`Ollama error: ${JSON.stringify(json)}`)
 	const text = json.message?.content
 	if (typeof text !== 'string' || !text.trim()) {
@@ -116,6 +162,11 @@ async function callOllama(opts: CallOptions) {
 			? 'Model đã dùng hết giới hạn token trước khi tạo JSON.'
 			: 'Model trả về nội dung rỗng.'
 		throw new Error(`Ollama không tạo được kết quả. ${reason}`)
+	}
+	if (json.done_reason === 'length' && !text.trimEnd().endsWith('}')) {
+		throw new Error(
+			'Ollama đã dừng vì chạm giới hạn token trước khi hoàn tất JSON.',
+		)
 	}
 	return {
 		text,

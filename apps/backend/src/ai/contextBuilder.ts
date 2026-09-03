@@ -36,6 +36,23 @@ export async function buildContext(
 	for (const key of relevantFields) {
 		if (fullSpec[key]) specSlice[key] = fullSpec[key] as any
 	}
+	if (step === 'gap' && specSlice.related_work_matrix) {
+		const field = specSlice.related_work_matrix as any
+		const rows = Array.isArray(field.value) ? field.value : []
+		specSlice.related_work_matrix = {
+			...field,
+			value: rows.slice(0, 6).map((row: any) => ({
+				source_id: row.source_id,
+				title: row.title,
+				citation: row.citation,
+				did_what: row.did_what,
+				feedback_used: row.feedback_used,
+				gap_note: row.gap_note,
+				verified: row.verified,
+				url: row.url,
+			})),
+		}
+	}
 
 	// 3) Chỉ lấy N quyết định GẦN NHẤT liên quan tới step này, ở dạng
 	//    tóm tắt 1 dòng — không lấy nguyên văn câu hỏi/giải thích cũ
@@ -64,8 +81,8 @@ export async function buildContext(
 	//
 	// Ở bản khởi tạo này để đơn giản, ta chỉ lấy 6 nguồn mới nhất:
 	let topSources: unknown[] = []
-	if (step === 'related_work' || step === 'gap') {
-		topSources = await db
+	if (step === 'related_work') {
+		const sourceRows = await db
 			.select({
 				id: sources.id,
 				title: sources.title,
@@ -79,7 +96,11 @@ export async function buildContext(
 			.from(sources)
 			.where(eq(sources.projectId, projectId))
 			.orderBy(desc(sources.createdAt))
-			.limit(8)
+			.limit(6)
+		topSources = sourceRows.map((source) => ({
+			...source,
+			summary: source.summary?.slice(0, 1600) ?? '',
+		}))
 	}
 
 	return {

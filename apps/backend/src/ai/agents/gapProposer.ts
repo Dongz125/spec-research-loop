@@ -26,6 +26,51 @@ Trả về JSON theo schema:
   "insufficient_evidence": false
 }`
 
+const GAP_SCHEMA = {
+	type: 'object',
+	additionalProperties: false,
+	required: ['gap_candidates', 'options_for_user', 'insufficient_evidence'],
+	properties: {
+		gap_candidates: {
+			type: 'array',
+			minItems: 1,
+			maxItems: 3,
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['id', 'text', 'evidence_source_ids'],
+				properties: {
+					id: { type: 'string', maxLength: 20 },
+					text: { type: 'string', maxLength: 700 },
+					evidence_source_ids: {
+						type: 'array',
+						minItems: 1,
+						maxItems: 4,
+						items: { type: 'string', maxLength: 64 },
+					},
+				},
+			},
+		},
+		options_for_user: {
+			type: 'array',
+			minItems: 1,
+			maxItems: 3,
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				required: ['id', 'label', 'explanation', 'example'],
+				properties: {
+					id: { type: 'string', maxLength: 10 },
+					label: { type: 'string', maxLength: 160 },
+					explanation: { type: 'string', maxLength: 360 },
+					example: { type: 'string', maxLength: 280 },
+				},
+			},
+		},
+		insufficient_evidence: { type: 'boolean' },
+	},
+} as const
+
 export async function runGapProposer(context: {
 	spec_slice: unknown
 	recent_decisions: string[]
@@ -36,5 +81,7 @@ export async function runGapProposer(context: {
 		model: modelFor('reasoning'),
 		systemPrompt: SYSTEM_PROMPT,
 		userPayload: context,
+		maxTokens: 2400,
+		jsonSchema: GAP_SCHEMA,
 	})
 }

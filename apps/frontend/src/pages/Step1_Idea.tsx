@@ -45,6 +45,7 @@ interface InterpreterResult {
 	understanding_summary: string
 	main_issues: string[]
 	detected_keywords: string[]
+	research_questions: string[]
 	confirmation_questions: ConfirmationQuestion[]
 }
 
@@ -125,6 +126,11 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 						value: result.detected_keywords ?? [],
 						status: 'CONFIRMED',
 						source: 'ai:interpreter',
+					},
+					research_questions: {
+						value: result.research_questions ?? [],
+						status: 'CONFIRMED',
+						source: 'user+ai:interpreter',
 					},
 					idea_interpretation: {
 						value: { result, answers },
@@ -266,6 +272,19 @@ export function Step1_Idea({ projectId, spec, onConfirmed }: Props) {
 												{k}
 											</Badge>
 										))}
+									</div>
+								)}
+
+								{result.research_questions?.length > 0 && (
+									<div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+										<p className="mb-1.5 text-xs font-semibold text-indigo-700">
+											Câu hỏi nghiên cứu đề xuất
+										</p>
+										<ul className="list-disc space-y-1 pl-4 text-xs text-slate-700">
+											{result.research_questions.map((question, index) => (
+												<li key={`${index}-${question}`}>{question}</li>
+											))}
+										</ul>
 									</div>
 								)}
 							</>

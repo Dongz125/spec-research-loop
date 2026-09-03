@@ -278,6 +278,15 @@ export function Step2_RelatedWorkGap({
 	const [selectedGapOption, setSelectedGapOption] = useState<GapOption | null>(
 		(spec.selected_gap_direction?.value as GapOption | undefined) ?? null,
 	)
+	const verifiedRelatedCount = new Set(
+		(rwResult?.related_work_matrix ?? [])
+			.filter((row) => row.verified && row.source_id && row.url)
+			.map((row) => row.source_id),
+	).size
+	const gapLocked =
+		!rwConfirmed ||
+		verifiedRelatedCount < 5 ||
+		Boolean(gapResult?.insufficient_evidence)
 
 	async function proposeGap(
 		instruction: string,
@@ -289,6 +298,17 @@ export function Step2_RelatedWorkGap({
 		}
 		if (!rwResult || rwResult.related_work_matrix.length === 0) {
 			setGapError('Cần có bảng related-work trước khi đề xuất gap.')
+			return null
+		}
+		if (verifiedRelatedCount < 5) {
+			setGapResult({
+				gap_candidates: [],
+				options_for_user: [],
+				insufficient_evidence: true,
+			})
+			setGapError(
+				`Cần ít nhất 5 nguồn related-work đã xác minh. Hiện chỉ có ${verifiedRelatedCount} nguồn.`,
+			)
 			return null
 		}
 		setGapLoading(true)
@@ -310,7 +330,7 @@ export function Step2_RelatedWorkGap({
 		option: GapOption,
 		result: GapResult | null = gapResult,
 	) {
-		if (!result || gapSaving) return
+		if (!result || result.insufficient_evidence || gapSaving) return
 		setGapSaving(true)
 		setGapError(null)
 		try {
@@ -627,10 +647,17 @@ export function Step2_RelatedWorkGap({
 								</AlertDescription>
 							</Alert>
 						)}
+						{rwConfirmed && verifiedRelatedCount < 5 && (
+							<Alert variant="destructive">
+								<AlertDescription>
+									Hiện chỉ có {verifiedRelatedCount} nguồn đã xác minh. Hãy tìm thêm để có ít nhất 5 nguồn trước khi chọn research gap.
+								</AlertDescription>
+							</Alert>
+						)}
 
 						<fieldset
-							disabled={!rwConfirmed}
-							className={`space-y-3 ${!rwConfirmed ? 'opacity-50' : ''}`}
+							disabled={gapLocked}
+							className={`space-y-3 ${gapLocked ? 'opacity-50' : ''}`}
 						>
 						{!gapResult && rwConfirmed && (
 							<p className="text-sm text-slate-400">
@@ -723,7 +750,7 @@ export function Step2_RelatedWorkGap({
 							<div className="mt-2 flex gap-1.5">
 								<Input
 									placeholder="E. Hướng khác..."
-									disabled={!rwConfirmed}
+									disabled={gapLocked}
 									value={customDirection}
 									onChange={(e) =>
 										setCustomDirection(e.target.value)
@@ -733,7 +760,7 @@ export function Step2_RelatedWorkGap({
 									size="sm"
 									variant="outline"
 									disabled={
-										!rwConfirmed ||
+										gapLocked ||
 										!customDirection.trim() ||
 										gapLoading ||
 										gapSaving
@@ -750,9 +777,31 @@ export function Step2_RelatedWorkGap({
 						</div>
 
 						{gapError && (
-							<p className="text-xs font-medium text-red-600">
-								{gapError}
-							</p>
+							<div className="space-y-2">
+								<p className="text-xs font-medium text-red-600">
+									{gapError}
+								</p>
+								{rwConfirmed &&
+									verifiedRelatedCount >= 5 &&
+									!gapResult && (
+										<Button
+											variant="outline"
+											size="sm"
+											className="w-full"
+											disabled={gapLoading}
+											onClick={() =>
+												void proposeGap(
+													'Dựa trên bảng related-work đã xác nhận, hãy thử đề xuất lại các research gap có bằng chứng.',
+												)
+											}
+										>
+											{gapLoading ? (
+												<Loader2 className="h-4 w-4 animate-spin" />
+											) : null}
+											Thử đề xuất Research Gap lại
+										</Button>
+									)}
+							</div>
 						)}
 
 						</fieldset>

@@ -133,16 +133,24 @@ function sectionToMarkdown(spec: ResearchSpec, section: SpecSection) {
 interface ResolutionOption {
 	id: string
 	label: string
+	instruction: string
+}
+
+interface AppliedFix {
+	summary: string
+	fields: string[]
 }
 
 export function Step4_Judge({
 	projectId,
 	spec,
 	onConfirmed,
+	onSpecUpdated,
 }: {
 	projectId: string
 	spec: ResearchSpec
 	onConfirmed: () => void
+	onSpecUpdated: () => void | Promise<void>
 }) {
 	const [reviews, setReviews] = useState<JudgeReview[] | null>(null)
 
@@ -150,7 +158,8 @@ export function Step4_Judge({
 	const [resolutionOptions, setResolutionOptions] = useState<
 		ResolutionOption[]
 	>([])
-	const [resolving, setResolving] = useState(false)
+	const [applying, setApplying] = useState(false)
+	const [appliedFix, setAppliedFix] = useState<AppliedFix | null>(null)
 
 	const [loading, setLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
@@ -164,24 +173,46 @@ export function Step4_Judge({
 	async function handleRunJudges() {
 		setLoading(true)
 		setError(null)
+		setReviews(null)
+		setResolutionOptions([])
+		setSelectedOption('')
+		setAppliedFix(null)
 		try {
 			// Bước 1: Chạy Judge
 			const res = await api.runJudge(projectId)
 			setReviews(res.reviews)
 
 			// Bước 2: Tự động gom lỗi và sinh options đề xuất sửa
+			const failedCount = res.reviews.filter(
+				(review) => review.status === 'failed',
+			).length
 			const issues = res.reviews
-				.map((r) => r.result.data.issue)
+				.filter((review) => review.status === 'completed')
+				.map((review) => review.result.data.issue)
 				.filter(Boolean)
-			if (issues.length > 0) {
-				await generateResolutionOptions(
-					`Dựa vào các lỗi sau, hãy đề xuất hướng sửa: ${issues.join(' | ')}`,
+			if (failedCount > 0) {
+				setError(
+					`${failedCount}/5 judge không hoàn tất vì output AI không hợp lệ. Kết quả của các judge còn lại vẫn được giữ; hãy chạy lại trước khi chốt spec.`,
 				)
-			} else {
-				// Nếu không có lỗi, cho chốt luôn
-				setResolutionOptions([
-					{ id: 'A', label: 'Spec đã ổn, giữ nguyên và chốt.' },
-				])
+			}
+			if (issues.length > 0 && failedCount === 0) {
+				const options = res.reviews
+					.filter(
+						(review) =>
+							review.status === 'completed' && review.result.data.issue,
+					)
+					.slice(0, 4)
+					.map((review, index) => {
+						if (review.status !== 'completed') throw new Error('Invalid review')
+						const judgeLabel =
+							JUDGE_LABELS[review.judge_name]?.label ?? review.judge_name
+						return {
+							id: String.fromCharCode(65 + index),
+							label: `Sửa theo ${judgeLabel}: ${review.result.data.suggestion || review.result.data.issue}`,
+							instruction: `Vấn đề: ${review.result.data.issue}. Lập luận: ${review.result.data.reasoning}. Yêu cầu sửa: ${review.result.data.suggestion}.`,
+						}
+					})
+				setResolutionOptions(options)
 			}
 		} catch (e: any) {
 			setError(e.message ?? 'Lỗi khi chạy đánh giá')
@@ -190,44 +221,85 @@ export function Step4_Judge({
 		}
 	}
 
-	// Hàm gọi AI để sinh option (dùng khi chạy tự động hoặc khi user nhập "Other")
-	async function generateResolutionOptions(instruction: string) {
-		setResolving(true)
+	async function handleApplyFix() {
+		const selectedInstruction =
+			selectedOption === 'Other'
+				? customOption.trim()
+				: resolutionOptions.find((option) => option.id === selectedOption)
+						?.instruction
+		if (!selectedInstruction || failedReviews.length > 0) return
+
+		setApplying(true)
+		setError(null)
 		try {
-			const res = await api.generate(
+			const judgeFindings = completedReviews
+				.filter((review) => review.result.data.issue)
+				.map((review) => ({
+					judge: review.judge_name,
+					issue: review.result.data.issue,
+					reasoning: review.result.data.reasoning,
+					suggestion: review.result.data.suggestion,
+				}))
+			const generated = await api.generate(
 				projectId,
 				'judge_resolution',
-				instruction,
+				JSON.stringify({
+					selected_fix: selectedInstruction,
+					judge_findings: judgeFindings,
+				}),
 			)
-			setResolutionOptions((res.preview as any).resolution_options || [])
+			const preview = generated.preview as {
+				change_summary?: string
+				updated_fields?: Record<string, unknown>
+			}
+			const updatedFields = preview.updated_fields ?? {}
+			const fieldNames = Object.keys(updatedFields)
+			if (fieldNames.length === 0) {
+				throw new Error('AI chưa tạo được thay đổi cụ thể cho spec.')
+			}
+			const confirmedFields = Object.fromEntries(
+				Object.entries(updatedFields).map(([field, value]) => [
+					field,
+					{
+						value,
+						status: 'CONFIRMED',
+						source: 'user+ai:judge_resolution',
+					},
+				]),
+			)
+			const summary = preview.change_summary || 'Áp dụng đề xuất sửa từ Judge'
+			await api.confirm(projectId, 'judge', confirmedFields, summary)
+			setAppliedFix({ summary, fields: fieldNames })
+			setResolutionOptions([])
+			setSelectedOption('')
+			setCustomOption('')
+			try {
+				await onSpecUpdated()
+			} catch {
+				setError(
+					'Spec đã được sửa đổi và lưu, nhưng chưa thể tải lại dữ liệu mới. Bạn có thể tải lại trang trước khi đánh giá lại.',
+				)
+			}
 		} catch (e: any) {
-			setError(e.message)
+			setError(e.message ?? 'Không áp dụng được sửa đổi vào spec')
 		} finally {
-			setResolving(false)
+			setApplying(false)
 		}
 	}
 
-	async function handleCustomOptionSubmit() {
-		if (!customOption.trim()) return
-		await generateResolutionOptions(
-			`Bỏ qua các đề xuất trước. Đề xuất lại hướng sửa đổi chi tiết theo ý này: ${customOption}`,
-		)
-	}
-
-	async function handleConfirm() {
+	async function handleFinalize() {
 		setSaving(true)
+		setError(null)
 		try {
-			const decisionLabel =
-				selectedOption === 'Other'
-					? customOption
-					: resolutionOptions.find((o) => o.id === selectedOption)
-							?.label
-
 			await api.confirm(
 				projectId,
 				'judge_resolution',
 				{},
-				`Quyết định sau Judge: ${decisionLabel || 'Không rõ'}`,
+				appliedFix
+					? `Người dùng chấp nhận bản sửa mà không đánh giá lại: ${appliedFix.summary}`
+					: issues.length > 0
+						? 'Người dùng đã xem kết quả của tất cả Judge và chọn không áp dụng sửa đổi.'
+						: 'Tất cả Judge đã hoàn tất và không phát hiện vấn đề.',
 			)
 			onConfirmed()
 		} catch (e: any) {
@@ -237,10 +309,13 @@ export function Step4_Judge({
 		}
 	}
 
-	const issues =
-		reviews
-			?.map((r) => ({ ...r.result.data, judge: r.judge_name }))
-			.filter((d) => d.issue) || []
+	const completedReviews =
+		reviews?.filter((review) => review.status === 'completed') ?? []
+	const failedReviews =
+		reviews?.filter((review) => review.status === 'failed') ?? []
+	const issues = completedReviews
+		.map((review) => ({ ...review.result.data, judge: review.judge_name }))
+		.filter((data) => data.issue)
 
 	return (
 		<div className="space-y-1">
@@ -310,7 +385,9 @@ export function Step4_Judge({
 								<div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
 									<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
 									<div>
-										<p className="font-semibold">Không thể chạy đánh giá</p>
+										<p className="font-semibold">
+											{reviews ? 'Đánh giá hoàn tất một phần' : 'Không thể chạy đánh giá'}
+										</p>
 										<p className="mt-0.5">{error}</p>
 									</div>
 								</div>
@@ -373,7 +450,10 @@ export function Step4_Judge({
 												Kết quả phản biện
 											</p>
 											<p className="text-xs text-slate-500">
-												Đã nhận kết quả từ {reviews.length} judge độc lập.
+												Hoàn tất {completedReviews.length}/5 judge độc lập
+												{failedReviews.length > 0
+													? `; ${failedReviews.length} judge cần chạy lại.`
+													: '.'}
 											</p>
 										</div>
 										<Badge variant={issues.length > 0 ? 'destructive' : 'outline'}>
@@ -387,7 +467,39 @@ export function Step4_Judge({
 										const judge = JUDGE_LABELS[review.judge_name] ?? {
 											label: review.judge_name,
 											icon: '⚖️',
-											criteria: '',
+													criteria: '',
+												}
+										if (review.status === 'failed') {
+											return (
+												<section
+													key={review.judge_name}
+													className="overflow-hidden rounded-xl border border-red-200 bg-white"
+												>
+													<div className="flex items-start justify-between gap-3 border-b border-red-100 bg-red-50 p-3">
+														<div className="flex items-start gap-2.5">
+															<span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white shadow-sm">
+																{judge.icon}
+															</span>
+															<div>
+																<h3 className="text-sm font-semibold text-slate-900">
+																	{index + 1}. {judge.label}
+																</h3>
+																<p className="mt-0.5 text-xs text-slate-500">
+																	{judge.criteria}
+																</p>
+															</div>
+														</div>
+														<Badge variant="destructive">Thất bại</Badge>
+													</div>
+													<div className="p-4 text-xs leading-relaxed text-red-700">
+														<p className="font-semibold">Không nhận được phán xét</p>
+														<p className="mt-1">{review.error}</p>
+														<p className="mt-2 text-slate-500">
+															Kết quả này không được tính là đạt và không ảnh hưởng đến các judge khác.
+														</p>
+													</div>
+												</section>
+											)
 										}
 										const result = review.result.data
 										const hasIssue = Boolean(result.issue)
@@ -464,14 +576,14 @@ export function Step4_Judge({
 						</CardTitle>
 					</CardHeader>
 					<CardContent className="space-y-4">
-						{resolving && (
+						{applying && (
 							<div className="flex items-center text-xs text-indigo-600 gap-2 mb-2">
 								<Loader2 className="h-3.5 w-3.5 animate-spin" />{' '}
-								Đang tổng hợp giải pháp...
+								Đang sửa và lưu spec...
 							</div>
 						)}
 
-						{!resolving && resolutionOptions.length > 0 && (
+						{!applying && !appliedFix && resolutionOptions.length > 0 && (
 							<div className="space-y-2">
 								{resolutionOptions.map((opt) => (
 									<Button
@@ -512,7 +624,7 @@ export function Step4_Judge({
 									</Button>
 
 									{selectedOption === 'Other' && (
-										<div className="flex gap-1">
+										<div>
 											<Input
 												className="text-xs h-8"
 												placeholder="VD: Không đổi claim, chỉ thêm..."
@@ -523,52 +635,93 @@ export function Step4_Judge({
 													)
 												}
 											/>
-											<Button
-												size="sm"
-												className="h-8 text-xs"
-												onClick={
-													handleCustomOptionSubmit
-												}
-												disabled={
-													!customOption.trim() ||
-													resolving
-												}
-											>
-												Hỏi AI
-											</Button>
 										</div>
 									)}
 								</div>
+
+								<Button
+									className="w-full"
+									onClick={handleApplyFix}
+									disabled={
+										!selectedOption ||
+										(selectedOption === 'Other' && !customOption.trim()) ||
+										applying
+									}
+								>
+									Áp dụng sửa đổi
+								</Button>
+								<Button
+									variant="outline"
+									className="w-full"
+									onClick={handleFinalize}
+									disabled={applying || saving}
+								>
+									{saving ? 'Đang lưu...' : 'Không sửa, xuất Spec cuối'}
+								</Button>
 							</div>
 						)}
 
-						{!resolving && resolutionOptions.length === 0 && (
+						{!reviews && !applying && (
 							<p className="text-xs text-slate-400">
 								Chạy đánh giá để AI đề xuất hướng sửa đổi.
 							</p>
 						)}
 
-						<div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 space-y-2 mt-4">
-							<p className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
-								<CheckCircle2 className="h-4 w-4" /> Spec cuối
-								cùng
-							</p>
-							<Button
-								className="w-full bg-emerald-600 hover:bg-emerald-700 text-white mt-2"
-								size="sm"
-								onClick={handleConfirm}
-								disabled={
-									saving ||
-									!selectedOption ||
-									(selectedOption === 'Other' &&
-										!customOption)
-								}
-							>
-								{saving
-									? 'Đang lưu...'
-									: 'Xác nhận & Xuất Spec cuối'}
-							</Button>
-						</div>
+						{appliedFix && (
+							<div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+								<p className="flex items-center gap-1 text-xs font-semibold text-indigo-800">
+									<CheckCircle2 className="h-4 w-4" /> Spec đã được sửa đổi
+								</p>
+								<p className="text-xs leading-relaxed text-indigo-700">
+									{appliedFix.summary}
+								</p>
+								<p className="text-[11px] text-indigo-600">
+									Field đã sửa: {appliedFix.fields.join(', ')}
+								</p>
+								<p className="text-xs font-medium text-slate-700">
+									Bạn có thể chạy đánh giá lại trên phiên bản mới nếu muốn.
+								</p>
+								<Button
+									className="w-full"
+									size="sm"
+									onClick={() => void handleRunJudges()}
+									disabled={loading || saving}
+								>
+									{loading ? (
+										<Loader2 className="h-4 w-4 animate-spin" />
+									) : null}
+									Chạy lại đánh giá
+								</Button>
+								<Button
+									variant="outline"
+									className="w-full"
+									size="sm"
+									onClick={handleFinalize}
+									disabled={loading || saving}
+								>
+									{saving ? 'Đang lưu...' : 'Không, xuất Spec cuối'}
+								</Button>
+							</div>
+						)}
+
+						{!appliedFix &&
+							reviews &&
+							failedReviews.length === 0 &&
+							issues.length === 0 && (
+								<div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+									<p className="flex items-center gap-1 text-xs font-semibold text-emerald-800">
+										<CheckCircle2 className="h-4 w-4" /> Không có vấn đề cần sửa
+									</p>
+									<Button
+										className="mt-2 w-full bg-emerald-600 text-white hover:bg-emerald-700"
+										size="sm"
+										onClick={handleFinalize}
+										disabled={saving}
+									>
+										{saving ? 'Đang lưu...' : 'Xác nhận & Xuất Spec cuối'}
+									</Button>
+								</div>
+							)}
 					</CardContent>
 				</Card>
 			</div>

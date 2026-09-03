@@ -24,6 +24,7 @@ interface WizardLayoutProps {
 	onLogout: () => void
 	onBack?: () => void
 	onNext?: () => void
+	hideNext?: boolean
 	children: ReactNode
 }
 
@@ -40,6 +41,7 @@ export function WizardLayout({
 	onLogout,
 	onBack,
 	onNext,
+	hideNext = false,
 	children,
 }: WizardLayoutProps) {
 	const [accountOpen, setAccountOpen] = useState(false)
@@ -156,9 +158,11 @@ export function WizardLayout({
 						>
 							<ChevronLeft className="h-4 w-4" /> Bước trước
 						</Button>
-						<Button size="sm" onClick={onNext} disabled={!onNext}>
-							Bước tiếp theo <ChevronRight className="h-4 w-4" />
-						</Button>
+						{!hideNext && (
+							<Button size="sm" onClick={onNext} disabled={!onNext}>
+								Bước tiếp theo <ChevronRight className="h-4 w-4" />
+							</Button>
+						)}
 					</div>
 				</div>
 			</footer>

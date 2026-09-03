@@ -23,14 +23,22 @@ Trả về JSON theo schema:
     "is_feasible": true,
     "warning": "Cảnh báo ngắn nếu sát/vượt giới hạn, hoặc null nếu an toàn",
     "assumptions": ["Các giả định được dùng để tính toán"]
-  }
-}`
+  },
+  "risks_and_limitations": [
+    "3-6 rủi ro hoặc giới hạn cụ thể của phương pháp, dữ liệu, đánh giá hay tài nguyên"
+  ],
+  "open_issues": [
+    "1-5 quyết định hoặc vấn đề còn mở cần người dùng giải quyết trước khi triển khai"
+  ]
+}
+
+Không để thiếu risks_and_limitations hoặc open_issues. Không lặp lại cùng một ý ở hai danh sách.`
 
 export async function runFeasibilityEstimator(context: any) {
 	return callAgent({
 		model: modelFor('fast'),
 		systemPrompt: SYSTEM_PROMPT,
 		userPayload: context,
-		maxTokens: 1000,
+		maxTokens: 1600,
 	})
 }
