@@ -30,7 +30,7 @@ export interface SpecVersion {
 	id: string
 	version_number: number
 	step: string
-	data: ResearchSpec
+	data?: ResearchSpec
 	changed_fields: string[]
 	change_summary: string | null
 	created_by: string
@@ -55,3 +55,12 @@ export type JudgeReview =
 			status: 'failed'
 			error: string
 	  }
+
+export interface JudgeEvaluationRun {
+	evaluation_run_id: string
+	spec_version_id: string
+	version_number: number
+	version_step: string
+	created_at: string
+	reviews: JudgeReview[]
+}

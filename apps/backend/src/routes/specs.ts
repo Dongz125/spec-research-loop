@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { randomUUID } from 'node:crypto'
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '../db/db'
 import {
@@ -25,6 +26,47 @@ import { formatCitation, searchOpenAlex } from '../sources/openAlex'
 export const router = Router({mergeParams: true})
 const asyncHandler = (handler: (...args: any[]) => Promise<unknown>) =>
 	(req: any, res: any, next: any) => Promise.resolve(handler(req, res, next)).catch(next)
+
+function hasValidCitation(row: any, allowedSourceIds: Set<unknown>) {
+	return (
+		Array.isArray(row?.evidence_source_ids) &&
+		row.evidence_source_ids.length > 0 &&
+		row.evidence_source_ids.every(
+			(id: unknown) => typeof id === 'string' && allowedSourceIds.has(id),
+		)
+	)
+}
+
+function citationRegression(
+	previousRows: unknown,
+	nextRows: unknown,
+	allowedSourceIds: Set<unknown>,
+) {
+	if (!Array.isArray(nextRows) || nextRows.length === 0) return true
+	const previous = Array.isArray(previousRows) ? previousRows : []
+	const previousInvalid = previous.filter(
+		(row) => !hasValidCitation(row, allowedSourceIds),
+	).length
+	const nextInvalid = nextRows.filter(
+		(row) => !hasValidCitation(row, allowedSourceIds),
+	).length
+	const brokeValidRow = previous.some(
+		(row, index) =>
+			hasValidCitation(row, allowedSourceIds) &&
+			!hasValidCitation(nextRows[index], allowedSourceIds),
+	)
+	return nextInvalid > previousInvalid || brokeValidRow
+}
+
+function collectValidCitationIds(rows: unknown, allowedSourceIds: Set<unknown>) {
+	const ids = new Set<string>()
+	if (!Array.isArray(rows)) return ids
+	for (const row of rows) {
+		if (!hasValidCitation(row, allowedSourceIds)) continue
+		for (const id of row.evidence_source_ids) ids.add(id)
+	}
+	return ids
+}
 
 const DOWNSTREAM_FIELDS: Partial<Record<StepId, string[]>> = {
 	idea_capture: [
@@ -394,12 +436,20 @@ router.post('/steps/:step/generate', asyncHandler(async (req: any, res) => {
 			break
 		case 'judge_resolution':
 			{
+				let fixAll = false
+				try {
+					const resolutionRequest = JSON.parse(instruction || '{}')
+					fixAll = resolutionRequest?.fix_all === true
+				} catch {
+					// Instruction tự do cũ được xem là sửa một vấn đề.
+				}
 				const generated = await runJudgeResolutionProposer(context)
 				const data = generated.data as {
 					change_summary?: string
 					updated_fields?: Record<string, unknown>
 				}
 				const allowedFields = new Set([
+					'problem_statement',
 					'gap_candidates',
 					'selected_gap_direction',
 					'contributions',
@@ -415,9 +465,13 @@ router.post('/steps/:step/generate', asyncHandler(async (req: any, res) => {
 					),
 				)
 				const changedFieldNames = Object.keys(updatedFields)
-				if (changedFieldNames.length === 0 || changedFieldNames.length > 3) {
+				const maxChangedFields = fixAll ? allowedFields.size : 3
+				if (
+					changedFieldNames.length === 0 ||
+					changedFieldNames.length > maxChangedFields
+				) {
 					throw new Error(
-						'AI phải đề xuất thay đổi từ 1 đến 3 field hợp lệ trong spec.',
+						`AI phải đề xuất thay đổi từ 1 đến ${maxChangedFields} field hợp lệ trong spec.`,
 					)
 				}
 				for (const [field, value] of Object.entries(updatedFields)) {
@@ -446,21 +500,10 @@ router.post('/steps/:step/generate', asyncHandler(async (req: any, res) => {
 				for (const field of ['gap_candidates', 'claim_evidence_matrix']) {
 					if (!(field in updatedFields)) continue
 					const rows = updatedFields[field]
-					if (
-						!Array.isArray(rows) ||
-						rows.length === 0 ||
-						rows.some(
-							(row: any) =>
-								!Array.isArray(row?.evidence_source_ids) ||
-								row.evidence_source_ids.length === 0 ||
-								row.evidence_source_ids.some(
-									(id: unknown) =>
-										typeof id !== 'string' || !allowedSourceIds.has(id),
-								),
-						)
-					) {
+					const previousRows = (context.spec_slice as any)[field]?.value
+					if (citationRegression(previousRows, rows, allowedSourceIds)) {
 						throw new Error(
-							`AI sửa ${field} nhưng không giữ liên kết citation hợp lệ.`,
+							`AI sửa ${field} nhưng làm tăng citation lỗi hoặc làm hỏng citation đang hợp lệ.`,
 						)
 					}
 				}
@@ -551,25 +594,14 @@ router.post('/steps/:step/confirm', asyncHandler(async (req: any, res) => {
 			)
 			const citedIds = new Set<string>()
 			for (const { field, value } of citationRows) {
-				if (
-					!Array.isArray(value) ||
-					value.length === 0 ||
-					value.some(
-						(row: any) =>
-							!Array.isArray(row?.evidence_source_ids) ||
-							row.evidence_source_ids.length === 0 ||
-							row.evidence_source_ids.some((id: unknown) => {
-								if (typeof id !== 'string' || !allowedSourceIds.has(id)) {
-									return true
-								}
-								citedIds.add(id)
-								return false
-							}),
-					)
-				) {
+				const previousValue = prevData[field]?.value
+				if (citationRegression(previousValue, value, allowedSourceIds)) {
 					throw new Error(
-						`Không thể áp dụng bản sửa vì ${field} có citation không hợp lệ.`,
+						`Không thể áp dụng vì bản sửa làm citation của ${field} tệ hơn.`,
 					)
+				}
+				for (const id of collectValidCitationIds(value, allowedSourceIds)) {
+					citedIds.add(id)
 				}
 			}
 			if (citedIds.size > 0) {
@@ -729,6 +761,35 @@ router.get('/versions', asyncHandler(async (req: any, res) => {
 	res.json(rows)
 }))
 
+// GET /versions/:versionNumber — lấy snapshot để xem hoặc xuất, không rollback.
+router.get('/versions/:versionNumber', asyncHandler(async (req: any, res) => {
+	const versionNumber = Number(req.params.versionNumber)
+	if (!Number.isInteger(versionNumber) || versionNumber < 1) {
+		return res.status(400).json({ error: 'Version không hợp lệ' })
+	}
+	const [version] = await db
+		.select({
+			id: specVersions.id,
+			version_number: specVersions.versionNumber,
+			step: specVersions.step,
+			data: specVersions.data,
+			changed_fields: specVersions.changedFields,
+			change_summary: specVersions.changeSummary,
+			created_by: specVersions.createdBy,
+			created_at: specVersions.createdAt,
+		})
+		.from(specVersions)
+		.where(
+			and(
+				eq(specVersions.projectId, req.params.id),
+				eq(specVersions.versionNumber, versionNumber),
+			),
+		)
+		.limit(1)
+	if (!version) return res.status(404).json({ error: 'Version không tồn tại' })
+	res.json(version)
+}))
+
 // ---------------------------------------------------------------------
 // POST /versions/:versionNumber/rollback
 // "Quay lại bước trước" — chỉ đơn giản đọc lại version cũ, KHÔNG gọi AI.
@@ -769,7 +830,11 @@ router.post(
 router.post('/judge', asyncHandler(async (req: any, res) => {
 	const { id: projectId } = req.params
 	const [latest] = await db
-		.select({ id: specVersions.id, data: specVersions.data })
+		.select({
+			id: specVersions.id,
+			versionNumber: specVersions.versionNumber,
+			data: specVersions.data,
+		})
 		.from(specVersions)
 		.where(eq(specVersions.projectId, projectId))
 		.orderBy(desc(specVersions.versionNumber))
@@ -777,25 +842,107 @@ router.post('/judge', asyncHandler(async (req: any, res) => {
 	if (!latest) return res.status(400).json({ error: 'Chưa có spec để judge' })
 
 	const judgeResults = await runAllJudges(latest.data)
+	const evaluationRunId = randomUUID()
 
-	const completedReviewRows = judgeResults.flatMap((review) => {
-		if (review.status !== 'completed') return []
-		const data = review.result.data
-		return [
-			{
+	const reviewRows = judgeResults.map((review) => {
+		if (review.status === 'completed') {
+			const data = review.result.data
+			return {
+				evaluationRunId,
 				specVersionId: latest.id,
 				judgeName: review.judge_name,
 				issue: data.issue,
 				reasoning: data.reasoning,
 				severity: data.severity,
 				suggestion: data.suggestion,
-				rawOutput: data,
-			},
-		]
+				rawOutput: { status: 'completed', data },
+			}
+		}
+		return {
+			evaluationRunId,
+			specVersionId: latest.id,
+			judgeName: review.judge_name,
+			issue: null,
+			reasoning: review.error,
+			severity: null,
+			suggestion: null,
+			rawOutput: { status: 'failed', error: review.error },
+		}
 	})
-	if (completedReviewRows.length > 0) {
-		await db.insert(judgeReviews).values(completedReviewRows)
+	if (reviewRows.length > 0) {
+		await db.insert(judgeReviews).values(reviewRows)
 	}
 
-	res.json({ spec_version_id: latest.id, reviews: judgeResults })
+	res.json({
+		evaluation_run_id: evaluationRunId,
+		spec_version_id: latest.id,
+		version_number: latest.versionNumber,
+		reviews: judgeResults,
+	})
+}))
+
+// GET /judge/history — các lượt Judge được nhóm theo đúng Spec version.
+router.get('/judge/history', asyncHandler(async (req: any, res) => {
+	const rows = await db
+		.select({
+			id: judgeReviews.id,
+			evaluation_run_id: judgeReviews.evaluationRunId,
+			spec_version_id: judgeReviews.specVersionId,
+			version_number: specVersions.versionNumber,
+			version_step: specVersions.step,
+			judge_name: judgeReviews.judgeName,
+			issue: judgeReviews.issue,
+			reasoning: judgeReviews.reasoning,
+			severity: judgeReviews.severity,
+			suggestion: judgeReviews.suggestion,
+			raw_output: judgeReviews.rawOutput,
+			created_at: judgeReviews.createdAt,
+		})
+		.from(judgeReviews)
+		.innerJoin(specVersions, eq(judgeReviews.specVersionId, specVersions.id))
+		.where(eq(specVersions.projectId, req.params.id))
+		.orderBy(desc(judgeReviews.createdAt))
+
+	const grouped = new Map<string, any>()
+	for (const row of rows) {
+		const runId = row.evaluation_run_id ?? `legacy-${row.spec_version_id}`
+		if (!grouped.has(runId)) {
+			grouped.set(runId, {
+				evaluation_run_id: runId,
+				spec_version_id: row.spec_version_id,
+				version_number: row.version_number,
+				version_step: row.version_step,
+				created_at: row.created_at,
+				reviews_by_judge: new Map<string, unknown>(),
+			})
+		}
+		const group = grouped.get(runId)
+		if (group.reviews_by_judge.has(row.judge_name)) continue
+		const raw = row.raw_output as any
+		group.reviews_by_judge.set(
+			row.judge_name,
+			raw?.status === 'failed'
+				? { judge_name: row.judge_name, status: 'failed', error: raw.error || row.reasoning }
+				: {
+						judge_name: row.judge_name,
+						status: 'completed',
+						result: {
+							data: {
+								issue: row.issue,
+								reasoning: row.reasoning || '',
+								severity: row.severity,
+								suggestion: row.suggestion || '',
+							},
+						},
+					},
+		)
+	}
+
+	res.json({
+		runs: Array.from(grouped.values()).map((group) => ({
+			...group,
+			reviews_by_judge: undefined,
+			reviews: Array.from(group.reviews_by_judge.values()),
+		})),
+	})
 }))

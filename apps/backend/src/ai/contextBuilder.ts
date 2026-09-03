@@ -36,21 +36,37 @@ export async function buildContext(
 	for (const key of relevantFields) {
 		if (fullSpec[key]) specSlice[key] = fullSpec[key] as any
 	}
-	if (step === 'gap' && specSlice.related_work_matrix) {
+	if (
+		(step === 'gap' || step === 'contribution') &&
+		specSlice.related_work_matrix
+	) {
 		const field = specSlice.related_work_matrix as any
 		const rows = Array.isArray(field.value) ? field.value : []
 		specSlice.related_work_matrix = {
 			...field,
-			value: rows.slice(0, 6).map((row: any) => ({
-				source_id: row.source_id,
-				title: row.title,
-				citation: row.citation,
-				did_what: row.did_what,
-				feedback_used: row.feedback_used,
-				gap_note: row.gap_note,
-				verified: row.verified,
-				url: row.url,
-			})),
+			value: rows
+				.filter((row: any) => row?.source_id && row?.verified && row?.url)
+				.slice(0, step === 'gap' ? 5 : 6)
+				.map((row: any) => ({
+					source_id: row.source_id,
+					title: String(row.title ?? '').slice(0, 180),
+					did_what: String(row.did_what ?? '').slice(0, 320),
+					feedback_used: String(row.feedback_used ?? '').slice(0, 180),
+					gap_note: String(row.gap_note ?? '').slice(0, 320),
+					verified: row.verified,
+					url: row.url,
+				})),
+		}
+	}
+	if (step === 'gap') {
+		delete specSlice.gap_candidates
+		delete specSlice.selected_gap_direction
+		if (specSlice.problem_statement) {
+			const field = specSlice.problem_statement as any
+			specSlice.problem_statement = {
+				...field,
+				value: String(field.value ?? '').slice(0, 1200),
+			}
 		}
 	}
 

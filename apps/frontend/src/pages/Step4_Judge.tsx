@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
 	Gavel,
 	AlertTriangle,
@@ -10,7 +10,7 @@ import {
 	X,
 } from 'lucide-react'
 import { api } from '@/lib/api'
-import type { JudgeReview, ResearchSpec } from '@/lib/types'
+import type { JudgeEvaluationRun, JudgeReview, ResearchSpec } from '@/lib/types'
 import {
 	Card,
 	CardHeader,
@@ -134,6 +134,33 @@ interface ResolutionOption {
 	id: string
 	label: string
 	instruction: string
+	judgeNames: string[]
+}
+
+function buildResolutionOptions(reviews: JudgeReview[]): ResolutionOption[] {
+	const issueReviews = reviews.filter(
+		(review) => review.status === 'completed' && review.result.data.issue,
+	)
+	if (issueReviews.length === 0) return []
+	const individualOptions = issueReviews.map((review, index) => {
+		if (review.status !== 'completed') throw new Error('Invalid review')
+		const judgeLabel = JUDGE_LABELS[review.judge_name]?.label ?? review.judge_name
+		return {
+			id: String.fromCharCode(65 + index),
+			label: `Sửa theo ${judgeLabel}: ${review.result.data.suggestion || review.result.data.issue}`,
+			instruction: `Vấn đề: ${review.result.data.issue}. Lập luận: ${review.result.data.reasoning}. Yêu cầu sửa: ${review.result.data.suggestion}.`,
+			judgeNames: [review.judge_name],
+		}
+	})
+	return [
+		{
+			id: 'AUTO',
+			label: 'Sửa tất cả vấn đề (đang phát triển)',
+			instruction: 'Tự động sửa lần lượt vấn đề ưu tiên và chạy Judge lại sau mỗi vòng.',
+			judgeNames: issueReviews.map((review) => review.judge_name),
+		},
+		...individualOptions,
+	]
 }
 
 interface AppliedFix {
@@ -141,24 +168,40 @@ interface AppliedFix {
 	fields: string[]
 }
 
+interface FixProgress {
+	current: number
+	total: number
+	label: string
+}
+
 export function Step4_Judge({
 	projectId,
 	spec,
+	latestSpecVersionId,
 	onConfirmed,
 	onSpecUpdated,
 }: {
 	projectId: string
 	spec: ResearchSpec
+	latestSpecVersionId: string
 	onConfirmed: () => void
 	onSpecUpdated: () => void | Promise<void>
 }) {
 	const [reviews, setReviews] = useState<JudgeReview[] | null>(null)
+	const [evaluationRuns, setEvaluationRuns] = useState<JudgeEvaluationRun[]>([])
+	const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+	const [loadingHistory, setLoadingHistory] = useState(false)
+	const [evaluationSpec, setEvaluationSpec] = useState(spec)
+	const [needsReevaluation, setNeedsReevaluation] = useState(false)
 
 	// State mới cho luồng Resolution
 	const [resolutionOptions, setResolutionOptions] = useState<
 		ResolutionOption[]
 	>([])
+	const [pendingFixOption, setPendingFixOption] =
+		useState<ResolutionOption | null>(null)
 	const [applying, setApplying] = useState(false)
+	const [fixProgress, setFixProgress] = useState<FixProgress | null>(null)
 	const [appliedFix, setAppliedFix] = useState<AppliedFix | null>(null)
 
 	const [loading, setLoading] = useState(false)
@@ -170,17 +213,83 @@ export function Step4_Judge({
 	const [selectedSpecSection, setSelectedSpecSection] =
 		useState<SpecSection | null>(null)
 
+	function displayEvaluationRun(run: JudgeEvaluationRun) {
+		setSelectedRunId(run.evaluation_run_id)
+		setReviews(run.reviews)
+		setAppliedFix(null)
+		setSelectedOption('')
+		const failedCount = run.reviews.filter(
+			(review) => review.status === 'failed',
+		).length
+		if (failedCount > 0) {
+			setError(`${failedCount}/5 Judge không hoàn tất trong lượt đánh giá này.`)
+		} else {
+			setError(null)
+		}
+		setResolutionOptions(
+			run.spec_version_id === latestSpecVersionId && failedCount === 0
+				? buildResolutionOptions(run.reviews)
+				: [],
+		)
+		if (run.spec_version_id === latestSpecVersionId) {
+			setEvaluationSpec(spec)
+		} else {
+			void api.getVersion(projectId, run.version_number)
+				.then((version) => {
+					if (version.data) setEvaluationSpec(version.data)
+				})
+				.catch((error) =>
+					setError(error.message ?? 'Không tải được Spec của lượt đánh giá.'),
+				)
+		}
+	}
+
+	useEffect(() => {
+		setLoadingHistory(true)
+		api.getJudgeHistory(projectId)
+			.then(({ runs }) => {
+				setEvaluationRuns(runs)
+				setNeedsReevaluation(
+					!runs.some((run) => run.spec_version_id === latestSpecVersionId),
+				)
+				if (runs[0]) displayEvaluationRun(runs[0])
+			})
+			.catch((error) =>
+				setError(error.message ?? 'Không tải được lịch sử đánh giá.'),
+			)
+			.finally(() => setLoadingHistory(false))
+	}, [projectId, latestSpecVersionId])
+
 	async function handleRunJudges() {
 		setLoading(true)
 		setError(null)
 		setReviews(null)
+		setEvaluationSpec(spec)
+		setSelectedRunId(null)
 		setResolutionOptions([])
 		setSelectedOption('')
+		setPendingFixOption(null)
 		setAppliedFix(null)
 		try {
 			// Bước 1: Chạy Judge
 			const res = await api.runJudge(projectId)
 			setReviews(res.reviews)
+			const newRun: JudgeEvaluationRun = {
+				evaluation_run_id: res.evaluation_run_id,
+				spec_version_id: res.spec_version_id,
+				version_number: res.version_number,
+				version_step: 'judge',
+				created_at: new Date().toISOString(),
+				reviews: res.reviews,
+			}
+			setEvaluationRuns((previous) => [
+				newRun,
+				...previous.filter(
+					(run) => run.evaluation_run_id !== newRun.evaluation_run_id,
+				),
+			])
+			setSelectedRunId(newRun.evaluation_run_id)
+			setNeedsReevaluation(false)
 
 			// Bước 2: Tự động gom lỗi và sinh options đề xuất sửa
 			const failedCount = res.reviews.filter(
@@ -196,23 +305,7 @@ export function Step4_Judge({
 				)
 			}
 			if (issues.length > 0 && failedCount === 0) {
-				const options = res.reviews
-					.filter(
-						(review) =>
-							review.status === 'completed' && review.result.data.issue,
-					)
-					.slice(0, 4)
-					.map((review, index) => {
-						if (review.status !== 'completed') throw new Error('Invalid review')
-						const judgeLabel =
-							JUDGE_LABELS[review.judge_name]?.label ?? review.judge_name
-						return {
-							id: String.fromCharCode(65 + index),
-							label: `Sửa theo ${judgeLabel}: ${review.result.data.suggestion || review.result.data.issue}`,
-							instruction: `Vấn đề: ${review.result.data.issue}. Lập luận: ${review.result.data.reasoning}. Yêu cầu sửa: ${review.result.data.suggestion}.`,
-						}
-					})
-				setResolutionOptions(options)
+				setResolutionOptions(buildResolutionOptions(res.reviews))
 			}
 		} catch (e: any) {
 			setError(e.message ?? 'Lỗi khi chạy đánh giá')
@@ -221,56 +314,168 @@ export function Step4_Judge({
 		}
 	}
 
-	async function handleApplyFix() {
+	async function handleApplyFix(option: ResolutionOption) {
 		const selectedInstruction =
-			selectedOption === 'Other'
+			option.id === 'Other'
 				? customOption.trim()
-				: resolutionOptions.find((option) => option.id === selectedOption)
-						?.instruction
-		if (!selectedInstruction || failedReviews.length > 0) return
+				: option.instruction
+		const selectedRun = evaluationRuns.find(
+			(run) => run.evaluation_run_id === selectedRunId,
+		)
+		if (
+			!selectedInstruction ||
+			failedReviews.length > 0 ||
+			selectedRun?.spec_version_id !== latestSpecVersionId
+		) return
 
 		setApplying(true)
+		setFixProgress(null)
 		setError(null)
+		let appliedCount = 0
+		const appliedFields = new Set<string>()
+		const appliedSummaries: string[] = []
 		try {
-			const judgeFindings = completedReviews
-				.filter((review) => review.result.data.issue)
-				.map((review) => ({
-					judge: review.judge_name,
-					issue: review.result.data.issue,
-					reasoning: review.result.data.reasoning,
-					suggestion: review.result.data.suggestion,
-				}))
-			const generated = await api.generate(
-				projectId,
-				'judge_resolution',
-				JSON.stringify({
-					selected_fix: selectedInstruction,
-					judge_findings: judgeFindings,
-				}),
-			)
-			const preview = generated.preview as {
-				change_summary?: string
-				updated_fields?: Record<string, unknown>
+			const toFindings = (sourceReviews: JudgeReview[], judgeNames?: string[]) =>
+				sourceReviews
+					.filter(
+						(review) =>
+							review.status === 'completed' &&
+							review.result.data.issue &&
+							(!judgeNames || judgeNames.includes(review.judge_name)),
+					)
+					.map((review) => {
+						if (review.status !== 'completed') throw new Error('Invalid review')
+						return {
+							judge: review.judge_name,
+							issue: review.result.data.issue,
+							reasoning: review.result.data.reasoning,
+							suggestion: review.result.data.suggestion,
+							severity: review.result.data.severity,
+						}
+					})
+
+			async function applyOne(
+				instruction: string,
+				findings: ReturnType<typeof toFindings>,
+				label: string,
+				round: number,
+				total: number,
+			) {
+				setFixProgress({ current: round, total, label: `Đang sửa ${label}` })
+				const generated = await api.generate(
+					projectId,
+					'judge_resolution',
+					JSON.stringify({
+						selected_fix: instruction,
+						fix_all: false,
+						judge_findings: findings,
+					}),
+				)
+				const preview = generated.preview as {
+					change_summary?: string
+					updated_fields?: Record<string, unknown>
+				}
+				const updatedFields = preview.updated_fields ?? {}
+				const fieldNames = Object.keys(updatedFields)
+				if (fieldNames.length === 0) {
+					throw new Error(`AI chưa tạo được thay đổi cho ${label}.`)
+				}
+				const confirmedFields = Object.fromEntries(
+					Object.entries(updatedFields).map(([field, value]) => [
+						field,
+						{
+							value,
+							status: 'CONFIRMED',
+							source: 'user+ai:judge_resolution',
+						},
+					]),
+				)
+				const summary = preview.change_summary || `Áp dụng đề xuất từ ${label}`
+				await api.confirm(
+					projectId,
+					'judge',
+					confirmedFields,
+					`Sửa vòng ${round}/${total} – ${label}: ${summary}`,
+				)
+				appliedCount += 1
+				fieldNames.forEach((field) => appliedFields.add(field))
+				appliedSummaries.push(summary)
+				return summary
 			}
-			const updatedFields = preview.updated_fields ?? {}
-			const fieldNames = Object.keys(updatedFields)
-			if (fieldNames.length === 0) {
-				throw new Error('AI chưa tạo được thay đổi cụ thể cho spec.')
+
+			if (option.id === 'AUTO') {
+				const severityRank: Record<string, number> = {
+					CRITICAL: 3,
+					MAJOR: 2,
+					MINOR: 1,
+				}
+				let latestReviews = reviews ?? []
+				let resolved = false
+				for (let round = 1; round <= 5; round += 1) {
+					const findings = toFindings(latestReviews).sort(
+						(a, b) =>
+							(severityRank[b.severity ?? ''] ?? 0) -
+							(severityRank[a.severity ?? ''] ?? 0),
+					)
+					if (findings.length === 0) {
+						resolved = true
+						break
+					}
+					const finding = findings[0]
+					const label = JUDGE_LABELS[finding.judge]?.label ?? finding.judge
+					await applyOne(
+						`Vấn đề: ${finding.issue}. Lập luận: ${finding.reasoning}. Yêu cầu sửa: ${finding.suggestion}.`,
+						[finding],
+						label,
+						round,
+						5,
+					)
+					setFixProgress({ current: round, total: 5, label: 'Đang chạy lại 5 Judge' })
+					const judged = await api.runJudge(projectId)
+					latestReviews = judged.reviews
+					setReviews(latestReviews)
+					const failedCount = latestReviews.filter(
+						(review) => review.status === 'failed',
+					).length
+					if (failedCount > 0) {
+						throw new Error(`${failedCount}/5 Judge không hoàn tất sau vòng ${round}.`)
+					}
+					if (toFindings(latestReviews).length === 0) {
+						resolved = true
+						break
+					}
+				}
+
+				if (resolved) {
+			setAppliedFix({
+						summary: `Đã tự động sửa ${appliedCount} vòng và kết quả đánh giá mới không còn vấn đề.`,
+						fields: Array.from(appliedFields),
+			})
+			setNeedsReevaluation(true)
+					setResolutionOptions([])
+				} else {
+					setAppliedFix(null)
+					setResolutionOptions(buildResolutionOptions(latestReviews))
+					setError(
+						'Đã đạt giới hạn 5 vòng nhưng Judge vẫn còn phát hiện vấn đề. Các phiên bản đã được lưu; bạn có thể chọn sửa thủ công hoặc chạy tự động thêm một lượt.',
+					)
+				}
+			} else {
+				const judgeFindings = toFindings(
+					reviews ?? [],
+					option.id === 'Other' ? [] : option.judgeNames,
+				)
+				await applyOne(
+					selectedInstruction,
+					judgeFindings,
+					option.id === 'Other' ? 'hướng sửa tự nhập' : option.label.split(':')[0],
+					1,
+					1,
+				)
+				setAppliedFix({ summary: appliedSummaries[0], fields: Array.from(appliedFields) })
+				setNeedsReevaluation(true)
+				setResolutionOptions([])
 			}
-			const confirmedFields = Object.fromEntries(
-				Object.entries(updatedFields).map(([field, value]) => [
-					field,
-					{
-						value,
-						status: 'CONFIRMED',
-						source: 'user+ai:judge_resolution',
-					},
-				]),
-			)
-			const summary = preview.change_summary || 'Áp dụng đề xuất sửa từ Judge'
-			await api.confirm(projectId, 'judge', confirmedFields, summary)
-			setAppliedFix({ summary, fields: fieldNames })
-			setResolutionOptions([])
 			setSelectedOption('')
 			setCustomOption('')
 			try {
@@ -281,10 +486,40 @@ export function Step4_Judge({
 				)
 			}
 		} catch (e: any) {
-			setError(e.message ?? 'Không áp dụng được sửa đổi vào spec')
+			if (appliedCount > 0) {
+				setAppliedFix({
+					summary: `Đã lưu ${appliedCount} lần sửa trước khi dừng. Hãy chạy đánh giá lại để tiếp tục với spec mới nhất.`,
+					fields: Array.from(appliedFields),
+				})
+				setNeedsReevaluation(true)
+				setResolutionOptions([])
+			}
+			setError(
+				`${e.message ?? 'Không áp dụng được sửa đổi vào spec'}${appliedCount > 0 ? ` (${appliedCount} lần sửa trước đó đã được lưu vào lịch sử.)` : ''}`,
+			)
+			if (appliedCount > 0) {
+				await Promise.resolve(onSpecUpdated()).catch(() => undefined)
+			}
 		} finally {
+			setFixProgress(null)
 			setApplying(false)
 		}
+	}
+
+	function requestApplyFix(option?: ResolutionOption) {
+		const selected =
+			option ??
+			(selectedOption === 'Other' && customOption.trim()
+				? {
+						id: 'Other',
+						label: `Sửa theo hướng tự nhập: ${customOption.trim()}`,
+						instruction: customOption.trim(),
+						judgeNames: [],
+					}
+				: resolutionOptions.find((item) => item.id === selectedOption))
+		if (!selected) return
+		setSelectedOption(selected.id)
+		setPendingFixOption(selected)
 	}
 
 	async function handleFinalize() {
@@ -316,6 +551,13 @@ export function Step4_Judge({
 	const issues = completedReviews
 		.map((review) => ({ ...review.result.data, judge: review.judge_name }))
 		.filter((data) => data.issue)
+	const selectedEvaluationRun = evaluationRuns.find(
+		(run) => run.evaluation_run_id === selectedRunId,
+	)
+	const viewingHistoricalRun = Boolean(
+		selectedEvaluationRun &&
+		selectedEvaluationRun.spec_version_id !== latestSpecVersionId,
+	)
 
 	return (
 		<div className="space-y-1">
@@ -334,7 +576,7 @@ export function Step4_Judge({
 					<CardHeader className="pb-3">
 						<CardTitle className="text-sm flex items-center gap-2">
 							<ListChecks className="h-4 w-4 text-slate-500" />{' '}
-							Spec tạm thời
+							Spec {selectedEvaluationRun ? `v${selectedEvaluationRun.version_number}` : 'tạm thời'}
 						</CardTitle>
 					</CardHeader>
 					<CardContent className="space-y-1.5">
@@ -371,16 +613,54 @@ export function Step4_Judge({
 							<Button
 								size="sm"
 								onClick={handleRunJudges}
-								disabled={loading}
+								disabled={loading || applying || saving || loadingHistory}
 							>
 								{loading ? (
 									<Loader2 className="h-4 w-4 animate-spin mr-1" />
 								) : (
-									'Chạy đánh giá'
+									viewingHistoricalRun ? 'Đánh giá bản mới nhất' : 'Chạy đánh giá'
 								)}
 							</Button>
 						</CardHeader>
 						<CardContent>
+							<div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+								<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+									<div>
+										<p className="text-xs font-semibold text-slate-700">Lịch sử đánh giá theo phiên bản</p>
+										<p className="text-[11px] text-slate-500">Mỗi lựa chọn là một lượt Judge trên một snapshot Spec.</p>
+									</div>
+									<select
+										className="h-9 min-w-0 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 sm:w-[360px]"
+										value={selectedRunId ?? ''}
+										disabled={loadingHistory || evaluationRuns.length === 0 || loading || applying}
+										onChange={(event) => {
+											const run = evaluationRuns.find(
+												(item) => item.evaluation_run_id === event.target.value,
+											)
+											if (run) displayEvaluationRun(run)
+										}}
+									>
+										{evaluationRuns.length === 0 && (
+											<option value="">Chưa có lượt đánh giá</option>
+										)}
+										{evaluationRuns.map((run, index) => {
+											const issueCount = run.reviews.filter(
+												(review) => review.status === 'completed' && review.result.data.issue,
+											).length
+											return (
+												<option key={run.evaluation_run_id} value={run.evaluation_run_id}>
+													v{run.version_number}{index === 0 ? ' · mới nhất' : ''} · {issueCount} vấn đề · {new Date(run.created_at).toLocaleString('vi-VN')}
+												</option>
+											)
+										})}
+									</select>
+								</div>
+								{viewingHistoricalRun && (
+									<p className="mt-2 text-[11px] font-medium text-amber-700">
+										Bạn đang xem kết quả của Spec v{selectedEvaluationRun?.version_number}. Đây là lịch sử chỉ đọc; chỉ phiên bản mới nhất mới được áp dụng sửa đổi.
+									</p>
+								)}
+							</div>
 							{error && (
 								<div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
 									<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -576,10 +856,27 @@ export function Step4_Judge({
 						</CardTitle>
 					</CardHeader>
 					<CardContent className="space-y-4">
+						{viewingHistoricalRun && (
+							<div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+								Kết quả lịch sử chỉ để đối chiếu. Hãy chọn lượt đánh giá của phiên bản mới nhất để sửa hoặc chốt Spec.
+							</div>
+						)}
 						{applying && (
-							<div className="flex items-center text-xs text-indigo-600 gap-2 mb-2">
-								<Loader2 className="h-3.5 w-3.5 animate-spin" />{' '}
-								Đang sửa và lưu spec...
+							<div className="space-y-1 text-xs text-indigo-600 mb-2">
+								<div className="flex items-center gap-2">
+									<Loader2 className="h-3.5 w-3.5 animate-spin" />{' '}
+									{fixProgress
+										? `Đang sửa ${fixProgress.current}/${fixProgress.total}: ${fixProgress.label}`
+										: 'Đang chuẩn bị sửa spec...'}
+								</div>
+								{fixProgress && (
+									<div className="h-1.5 overflow-hidden rounded-full bg-indigo-100">
+										<div
+											className="h-full bg-indigo-500 transition-all"
+											style={{ width: `${(fixProgress.current / fixProgress.total) * 100}%` }}
+										/>
+									</div>
+								)}
 							</div>
 						)}
 
@@ -593,13 +890,12 @@ export function Step4_Judge({
 												? 'default'
 												: 'outline'
 										}
-										className="w-full justify-start text-xs h-auto py-2 whitespace-normal text-left"
-										onClick={() =>
-											setSelectedOption(opt.id)
-										}
-									>
-										<span className="font-bold mr-2">
-											{opt.id}.
+									className="w-full justify-start text-xs h-auto py-2 whitespace-normal text-left"
+									onClick={() => requestApplyFix(opt)}
+									disabled={opt.id === 'AUTO' || applying}
+								>
+									<span className="font-bold mr-2">
+										{opt.id === 'AUTO' ? '—' : `${opt.id}.`}
 										</span>{' '}
 										{opt.label}
 									</Button>
@@ -618,7 +914,7 @@ export function Step4_Judge({
 										}
 									>
 										<span className="font-bold mr-2">
-											E.
+											{String.fromCharCode(65 + resolutionOptions.filter((option) => option.id !== 'AUTO').length)}.
 										</span>{' '}
 										Other (Tự nhập hướng sửa)
 									</Button>
@@ -639,17 +935,15 @@ export function Step4_Judge({
 									)}
 								</div>
 
-								<Button
-									className="w-full"
-									onClick={handleApplyFix}
-									disabled={
-										!selectedOption ||
-										(selectedOption === 'Other' && !customOption.trim()) ||
-										applying
-									}
-								>
-									Áp dụng sửa đổi
-								</Button>
+								{selectedOption === 'Other' && (
+									<Button
+										className="w-full"
+										onClick={() => requestApplyFix()}
+										disabled={!customOption.trim() || applying}
+									>
+										Xem và xác nhận hướng sửa
+									</Button>
+								)}
 								<Button
 									variant="outline"
 									className="w-full"
@@ -661,10 +955,38 @@ export function Step4_Judge({
 							</div>
 						)}
 
-						{!reviews && !applying && (
+						{!reviews && !applying && !needsReevaluation && (
 							<p className="text-xs text-slate-400">
 								Chạy đánh giá để AI đề xuất hướng sửa đổi.
 							</p>
+						)}
+
+						{needsReevaluation && !applying && !loading && !appliedFix && (
+							<div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+								<p className="flex items-center gap-1 text-xs font-semibold text-indigo-800">
+									<CheckCircle2 className="h-4 w-4" /> Spec đã được sửa đổi
+								</p>
+								<p className="text-xs leading-relaxed text-indigo-700">
+									Phiên bản Spec mới nhất chưa được Judge đánh giá. Hãy chạy lại đánh giá để kiểm tra kết quả sau khi sửa.
+								</p>
+								<Button
+									className="w-full"
+									size="sm"
+									onClick={() => void handleRunJudges()}
+									disabled={saving}
+								>
+									Chạy lại đánh giá
+								</Button>
+								<Button
+									variant="outline"
+									className="w-full"
+									size="sm"
+									onClick={handleFinalize}
+									disabled={saving}
+								>
+									{saving ? 'Đang lưu...' : 'Không đánh giá lại, xuất Spec cuối'}
+								</Button>
+							</div>
 						)}
 
 						{appliedFix && (
@@ -726,6 +1048,64 @@ export function Step4_Judge({
 				</Card>
 			</div>
 
+			{pendingFixOption && (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
+					onMouseDown={(event) => {
+						if (event.target === event.currentTarget) setPendingFixOption(null)
+					}}
+				>
+					<div
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="judge-fix-confirm-title"
+						className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+					>
+						<div className="flex items-start gap-3">
+							<div className="rounded-full bg-indigo-100 p-2 text-indigo-700">
+								<Gavel className="h-5 w-5" />
+							</div>
+							<div className="min-w-0">
+								<h2
+									id="judge-fix-confirm-title"
+									className="font-semibold text-slate-900"
+								>
+									Xác nhận sửa Spec
+								</h2>
+								<p className="mt-1 text-sm text-slate-600">
+									AI sẽ sửa Spec theo lựa chọn sau:
+								</p>
+								<p className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm leading-relaxed text-indigo-900">
+									{pendingFixOption.label}
+								</p>
+								<p className="mt-2 text-xs text-slate-500">
+									{pendingFixOption.id === 'AUTO'
+										? 'Hệ thống sẽ ưu tiên vấn đề nghiêm trọng nhất, lưu một phiên bản, chạy lại đủ 5 Judge và lặp tối đa 5 vòng. Quy trình có thể mất vài phút.'
+										: 'Sau khi sửa xong, hệ thống sẽ lưu phiên bản Spec mới và cho phép bạn chạy đánh giá lại.'}
+								</p>
+							</div>
+						</div>
+						<div className="mt-5 flex justify-end gap-2">
+							<Button
+								variant="outline"
+								onClick={() => setPendingFixOption(null)}
+							>
+								Hủy
+							</Button>
+							<Button
+								onClick={() => {
+									const option = pendingFixOption
+									setPendingFixOption(null)
+									void handleApplyFix(option)
+								}}
+							>
+								{pendingFixOption.id === 'AUTO' ? 'Bắt đầu tự động' : 'Xác nhận sửa'}
+							</Button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			{selectedSpecSection && (
 				<div
 					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
@@ -768,7 +1148,7 @@ export function Step4_Judge({
 
 						<div className="flex-1 overflow-y-auto bg-slate-50 p-5">
 							<pre className="whitespace-pre-wrap rounded-xl border border-slate-200 bg-white p-5 font-mono text-xs leading-relaxed text-slate-700">
-								{sectionToMarkdown(spec, selectedSpecSection)}
+								{sectionToMarkdown(evaluationSpec, selectedSpecSection)}
 							</pre>
 						</div>
 

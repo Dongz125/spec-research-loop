@@ -209,6 +209,7 @@ export const judgeReviews = pgTable(
 	'judge_reviews',
 	{
 		id: uuid('id').primaryKey().defaultRandom(),
+		evaluationRunId: uuid('evaluation_run_id'),
 		specVersionId: uuid('spec_version_id')
 			.notNull()
 			.references(() => specVersions.id, { onDelete: 'cascade' }),
@@ -232,6 +233,7 @@ export const judgeReviews = pgTable(
 			sql`${t.severity} IN ('MINOR','MAJOR','CRITICAL')`,
 		),
 		index('idx_judge_reviews_version').on(t.specVersionId),
+		index('idx_judge_reviews_run').on(t.evaluationRunId),
 	],
 )
 

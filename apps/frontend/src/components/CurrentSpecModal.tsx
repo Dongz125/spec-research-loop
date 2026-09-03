@@ -10,6 +10,9 @@ interface Props {
 	currentStepLabel: string
 	currentStep: number
 	totalSteps: number
+	title?: string
+	subtitle?: string
+	downloadFilename?: string
 }
 
 export function CurrentSpecModal({
@@ -19,6 +22,9 @@ export function CurrentSpecModal({
 	currentStepLabel,
 	currentStep,
 	totalSteps,
+	title = 'Spec hiện tại',
+	subtitle,
+	downloadFilename = 'research-spec.md',
 }: Props) {
 	if (!open) return null
 	const progress = Math.round((currentStep / totalSteps) * 100)
@@ -45,10 +51,10 @@ export function CurrentSpecModal({
 							</div>
 							<div>
 								<h2 id="current-spec-title" className="font-semibold text-slate-900">
-									Spec hiện tại
+									{title}
 								</h2>
 								<p className="text-sm text-slate-500">
-									Bước {currentStep}/{totalSteps} · {currentStepLabel}
+									{subtitle ?? `Bước ${currentStep}/${totalSteps} · ${currentStepLabel}`}
 								</p>
 							</div>
 						</div>
@@ -75,7 +81,7 @@ export function CurrentSpecModal({
 				<div className="flex justify-end gap-2 border-t border-slate-200 p-4">
 					<Button
 						onClick={() =>
-							downloadText('research-spec.md', markdown, 'text/markdown')
+							downloadText(downloadFilename, markdown, 'text/markdown')
 						}
 					>
 						<Download className="h-4 w-4" /> Tải Markdown
