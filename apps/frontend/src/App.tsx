@@ -234,7 +234,7 @@ export default function App() {
 						}
 					: undefined
 			}
-			hideNext={screen === 'judge'}
+			hideNext={screen === 'judge' || screen === 'final'}
 		>
 			<div className="mb-4 flex items-center justify-between gap-3">
 				<button
@@ -282,13 +282,14 @@ export default function App() {
 				<Step4_Judge
 					projectId={projectId}
 					spec={spec}
+					latestSpecVersionId={specRevision}
 					onSpecUpdated={() =>
 						loadProject(projectId, 'judge', 'replace')
 					}
 					onConfirmed={() => loadProject(projectId, 'final', 'replace')}
 				/>
 			)}
-			{screen === 'final' && <Step5_Final spec={spec} />}
+			{screen === 'final' && <Step5_Final projectId={projectId} spec={spec} />}
 
 			<CurrentSpecModal
 				open={specModalOpen}

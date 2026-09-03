@@ -30,12 +30,16 @@ interface Props {
 	onFieldConfirmed: () => void
 }
 
+type RegenerationTarget = 'contribution' | 'experiment'
+
 export function Step3_ContributionExperiment({
 	projectId,
 	spec,
 	onFieldConfirmed,
 }: Props) {
 	const [error, setError] = useState<string | null>(null)
+	const [pendingRegeneration, setPendingRegeneration] =
+		useState<RegenerationTarget | null>(null)
 	const relatedSources =
 		(spec.related_work_matrix?.value as Array<{
 			source_id: string
@@ -249,6 +253,36 @@ export function Step3_ContributionExperiment({
 		}
 	}
 
+	const contributionLocked =
+		loadingExp || savingExp || loadingBudget || savingBudget
+	const experimentLocked =
+		loadingContrib || savingContrib || loadingBudget || savingBudget
+	const budgetLocked =
+		loadingContrib || savingContrib || loadingExp || savingExp
+
+	function requestGenerateContribution() {
+		if (expPreview || budgetPreview) {
+			setPendingRegeneration('contribution')
+			return
+		}
+		void handleGenContrib()
+	}
+
+	function requestGenerateExperiment() {
+		if (budgetPreview) {
+			setPendingRegeneration('experiment')
+			return
+		}
+		void handleGenExp()
+	}
+
+	function confirmRegeneration() {
+		const target = pendingRegeneration
+		setPendingRegeneration(null)
+		if (target === 'contribution') void handleGenContrib()
+		if (target === 'experiment') void handleGenExp()
+	}
+
 	return (
 		<div className="space-y-1">
 			<h1 className="text-xl font-semibold text-slate-900">
@@ -283,12 +317,13 @@ export function Step3_ContributionExperiment({
 								rows={2}
 								className="text-xs"
 								value={contribText}
+								disabled={contributionLocked}
 								onChange={(e) => setContribText(e.target.value)}
 							/>
 							<Button
 								size="sm"
-								onClick={handleGenContrib}
-								disabled={loadingContrib}
+								onClick={requestGenerateContribution}
+								disabled={loadingContrib || contributionLocked}
 								className="h-auto"
 							>
 								{loadingContrib ? (
@@ -377,7 +412,11 @@ export function Step3_ContributionExperiment({
 									variant="outline"
 									className="w-full border-blue-200 hover:bg-blue-50 text-blue-700"
 									onClick={confirmContrib}
-									disabled={savingContrib || contribConfirmed}
+									disabled={
+										savingContrib ||
+										contribConfirmed ||
+										contributionLocked
+									}
 								>
 									{savingContrib ? (
 										'Đang lưu...'
@@ -415,12 +454,15 @@ export function Step3_ContributionExperiment({
 								rows={2}
 								className="text-xs"
 								value={expText}
+								disabled={experimentLocked}
 								onChange={(e) => setExpText(e.target.value)}
 							/>
 							<Button
 								size="sm"
-								onClick={handleGenExp}
-								disabled={loadingExp || !contribConfirmed}
+								onClick={requestGenerateExperiment}
+								disabled={
+									loadingExp || !contribConfirmed || experimentLocked
+								}
 								className="h-auto"
 							>
 								{loadingExp ? (
@@ -458,7 +500,9 @@ export function Step3_ContributionExperiment({
 									variant="outline"
 									className="w-full border-emerald-200 hover:bg-emerald-50 text-emerald-700"
 									onClick={confirmExp}
-									disabled={savingExp || expConfirmed}
+									disabled={
+										savingExp || expConfirmed || experimentLocked
+									}
 								>
 									{savingExp ? (
 										'Đang lưu...'
@@ -501,12 +545,13 @@ export function Step3_ContributionExperiment({
 								rows={2}
 								className="text-xs"
 								value={budgetText}
+								disabled={budgetLocked}
 								onChange={(e) => setBudgetText(e.target.value)}
 							/>
 							<Button
 								size="sm"
 								onClick={handleGenBudget}
-								disabled={loadingBudget || !expConfirmed}
+								disabled={loadingBudget || !expConfirmed || budgetLocked}
 								className="h-auto"
 							>
 								{loadingBudget ? (
@@ -639,7 +684,7 @@ export function Step3_ContributionExperiment({
 									variant="outline"
 									className="w-full border-purple-200 hover:bg-purple-50 text-purple-700"
 									onClick={confirmBudget}
-									disabled={savingBudget || budgetConfirmed}
+									disabled={savingBudget || budgetConfirmed || budgetLocked}
 								>
 									{savingBudget ? (
 										'Đang lưu...'
@@ -659,6 +704,47 @@ export function Step3_ContributionExperiment({
 					</CardContent>
 				</Card>
 			</div>
+
+			{pendingRegeneration && (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="regeneration-warning-title"
+				>
+					<div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+						<div className="flex items-start gap-3">
+							<div className="rounded-full bg-amber-100 p-2 text-amber-700">
+								<AlertTriangle className="h-5 w-5" />
+							</div>
+							<div>
+								<h2
+									id="regeneration-warning-title"
+									className="font-semibold text-slate-900"
+								>
+									Tạo lại dữ liệu phía trước?
+								</h2>
+								<p className="mt-1 text-sm leading-relaxed text-slate-600">
+									{pendingRegeneration === 'contribution'
+										? 'Tạo lại Contribution sẽ xóa Kế hoạch thí nghiệm, Compute Budget, Risks & Limitations và Open Issues hiện tại.'
+										: 'Tạo lại Kế hoạch thí nghiệm sẽ xóa Compute Budget, Risks & Limitations và Open Issues hiện tại.'}
+								</p>
+							</div>
+						</div>
+						<div className="mt-5 flex justify-end gap-2">
+							<Button
+								variant="outline"
+								onClick={() => setPendingRegeneration(null)}
+							>
+								Hủy
+							</Button>
+							<Button onClick={confirmRegeneration}>
+								Tiếp tục tạo lại
+							</Button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	)
 }

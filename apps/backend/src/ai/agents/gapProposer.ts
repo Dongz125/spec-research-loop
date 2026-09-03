@@ -24,9 +24,13 @@ Trả về JSON theo schema:
     { "id": "A", "label": "...", "explanation": "...", "example": "..." }
   ],
   "insufficient_evidence": false
-}`
+}
 
-const GAP_SCHEMA = {
+Chỉ đề xuất tối đa 2 gap ngắn gọn. Không lặp lại toàn bộ related-work trong
+text; chỉ nêu kết luận so sánh cần thiết và source ID.`
+
+function gapSchema(sourceIds: string[]) {
+	return {
 	type: 'object',
 	additionalProperties: false,
 	required: ['gap_candidates', 'options_for_user', 'insufficient_evidence'],
@@ -34,19 +38,19 @@ const GAP_SCHEMA = {
 		gap_candidates: {
 			type: 'array',
 			minItems: 1,
-			maxItems: 3,
+			maxItems: 2,
 			items: {
 				type: 'object',
 				additionalProperties: false,
 				required: ['id', 'text', 'evidence_source_ids'],
 				properties: {
 					id: { type: 'string', maxLength: 20 },
-					text: { type: 'string', maxLength: 700 },
+					text: { type: 'string', maxLength: 420 },
 					evidence_source_ids: {
 						type: 'array',
 						minItems: 1,
-						maxItems: 4,
-						items: { type: 'string', maxLength: 64 },
+						maxItems: 3,
+						items: { type: 'string', enum: sourceIds },
 					},
 				},
 			},
@@ -54,22 +58,23 @@ const GAP_SCHEMA = {
 		options_for_user: {
 			type: 'array',
 			minItems: 1,
-			maxItems: 3,
+			maxItems: 2,
 			items: {
 				type: 'object',
 				additionalProperties: false,
 				required: ['id', 'label', 'explanation', 'example'],
 				properties: {
 					id: { type: 'string', maxLength: 10 },
-					label: { type: 'string', maxLength: 160 },
-					explanation: { type: 'string', maxLength: 360 },
-					example: { type: 'string', maxLength: 280 },
+					label: { type: 'string', maxLength: 120 },
+					explanation: { type: 'string', maxLength: 200 },
+					example: { type: 'string', maxLength: 160 },
 				},
 			},
 		},
 		insufficient_evidence: { type: 'boolean' },
 	},
-} as const
+	} as const
+}
 
 export async function runGapProposer(context: {
 	spec_slice: unknown
@@ -77,11 +82,19 @@ export async function runGapProposer(context: {
 	sources: unknown[]
 	user_instruction: string
 }) {
+	const relatedRows = (context.spec_slice as any)?.related_work_matrix?.value
+	const sourceIds = Array.from(
+		new Set<string>(
+			(Array.isArray(relatedRows) ? relatedRows : [])
+				.map((row: any) => row?.source_id)
+				.filter((id: unknown): id is string => typeof id === 'string'),
+		),
+	)
 	return callAgent({
 		model: modelFor('reasoning'),
 		systemPrompt: SYSTEM_PROMPT,
 		userPayload: context,
-		maxTokens: 2400,
-		jsonSchema: GAP_SCHEMA,
+		maxTokens: 1200,
+		jsonSchema: gapSchema(sourceIds),
 	})
 }

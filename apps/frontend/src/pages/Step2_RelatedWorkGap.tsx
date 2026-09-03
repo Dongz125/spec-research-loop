@@ -249,16 +249,18 @@ export function Step2_RelatedWorkGap({
 				`Xác nhận bảng related-work (${rwResult.related_work_matrix.length} nguồn)`,
 			)
 			setRwConfirmed(true)
-			await proposeGap(
-				'Dựa trên bảng related-work vừa xác nhận, hãy đề xuất các research gap phù hợp và các hướng để người dùng lựa chọn.',
-				true,
-			)
-			onFieldConfirmed()
 		} catch (e: any) {
 			setRwError(e.message ?? 'Không lưu được bảng related-work')
+			return
 		} finally {
 			setRwSaving(false)
 		}
+
+		await proposeGap(
+			'Dựa trên bảng related-work vừa xác nhận, hãy đề xuất các research gap phù hợp và các hướng để người dùng lựa chọn.',
+			true,
+		)
+		onFieldConfirmed()
 	}
 
 	// ---------- Cột phải: research gap ----------

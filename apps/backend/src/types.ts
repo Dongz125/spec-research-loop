@@ -111,9 +111,8 @@ export const STEP_FIELD_MAP: Record<StepId, (keyof ResearchSpec)[]> = {
 	],
 	contribution: [
 		'gap_candidates',
+		'selected_gap_direction',
 		'related_work_matrix',
-		'contributions',
-		'claim_evidence_matrix',
 	],
 	experiment_design: ['claim_evidence_matrix', 'experimental_protocol'],
 	feasibility: ['experimental_protocol', 'compute_budget'],
@@ -138,6 +137,7 @@ export const STEP_FIELD_MAP: Record<StepId, (keyof ResearchSpec)[]> = {
 		'related_work_matrix',
 	],
 	judge_resolution: [
+		'problem_statement',
 		'related_work_matrix',
 		'gap_candidates',
 		'selected_gap_direction',

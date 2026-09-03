@@ -1,4 +1,4 @@
-import type { JudgeReview } from './types'
+import type { JudgeEvaluationRun, JudgeReview, SpecVersion } from './types'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
 
@@ -105,7 +105,10 @@ export const api = {
 			},
 		),
 
-	getVersions: (projectId: string) => req<any[]>(`/projects/${projectId}/versions`),
+	getVersions: (projectId: string) => req<SpecVersion[]>(`/projects/${projectId}/versions`),
+
+	getVersion: (projectId: string, versionNumber: number) =>
+		req<SpecVersion>(`/projects/${projectId}/versions/${versionNumber}`),
 
 	rollback: (projectId: string, versionNumber: number) =>
 		req<{ restored_step: string; data: unknown }>(
@@ -114,8 +117,16 @@ export const api = {
 		),
 
 	runJudge: (projectId: string) =>
-		req<{ spec_version_id: string; reviews: JudgeReview[] }>(
+		req<{
+			evaluation_run_id: string
+			spec_version_id: string
+			version_number: number
+			reviews: JudgeReview[]
+		}>(
 			`/projects/${projectId}/judge`,
 			{ method: 'POST' },
 		),
+
+	getJudgeHistory: (projectId: string) =>
+		req<{ runs: JudgeEvaluationRun[] }>(`/projects/${projectId}/judge/history`),
 }

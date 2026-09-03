@@ -124,6 +124,7 @@ CREATE TABLE experiments (
 -- ---------------------------------------------------------------------
 CREATE TABLE judge_reviews (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  evaluation_run_id UUID,
   spec_version_id UUID NOT NULL REFERENCES spec_versions(id) ON DELETE CASCADE,
   judge_name TEXT NOT NULL CHECK (judge_name IN (
     'gap_judge','contribution_judge','experiment_judge',
@@ -138,6 +139,7 @@ CREATE TABLE judge_reviews (
 );
 
 CREATE INDEX idx_judge_reviews_version ON judge_reviews (spec_version_id);
+CREATE INDEX idx_judge_reviews_run ON judge_reviews (evaluation_run_id);
 
 -- ---------------------------------------------------------------------
 -- ai_call_logs: CHỈ để audit/debug — KHÔNG đọc lại bảng này để build

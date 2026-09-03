@@ -129,6 +129,7 @@ async function callOllama(opts: CallOptions) {
 				stream: false,
 				options: {
 					num_predict: opts.maxTokens ?? 2000,
+					temperature: 0,
 				},
 				messages: [
 					{ role: 'system', content: opts.systemPrompt },
@@ -142,7 +143,7 @@ async function callOllama(opts: CallOptions) {
 			(error.name === 'TimeoutError' || error.name === 'AbortError')
 		throw new Error(
 			isTimeout
-				? `Ollama không hoàn tất phản hồi trong ${Math.round(timeoutMs / 1000)} giây. OpenAlex có thể đã tìm xong nguồn; model local đang quá tải hoặc context quá lớn.`
+				? `Ollama không hoàn tất phản hồi trong ${Math.round(timeoutMs / 1000)} giây. Model local đang quá tải, context quá lớn hoặc giới hạn output quá cao.`
 				: `Không thể kết nối Ollama: ${error instanceof Error ? error.message : 'không rõ lỗi'}`,
 		)
 	}
